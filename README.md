@@ -1,14 +1,16 @@
-# Fantasy Football Data Scraper
+# Fantasy Football Data Pipeline
 
-A Python web scraper that extracts fantasy football data from Pro Football Reference.
+A comprehensive Python pipeline for processing fantasy football rankings data from multiple sources, calculating advanced metrics like Value-Based Drafting (VBD), and managing data workflows.
 
 ## Features
 
-- Scrapes fantasy football rankings from [Pro Football Reference](https://www.pro-football-reference.com/years/2024/fantasy.htm)
-- Converts data to pandas DataFrame
-- Saves data to CSV format
-- Includes error handling and user-agent headers
-- Simple and easy to use
+- **Multi-Source Data Processing**: Integrates rankings from FPTS, FantasyPros, JJ Zachariason, DraftShark, and Hayden Winks
+- **Automated File Management**: Handles data flow between update, latest, and archive folders
+- **Advanced Analytics**: Calculates Value-Based Drafting (VBD) with position-specific baselines
+- **Player Key Matching**: Standardizes player names across different data sources
+- **Consolidated Rankings**: Creates unified ranking files with multiple ranking systems
+- **Historical Data Preservation**: Archives processed files with timestamps
+- **Jupyter Notebook Analysis**: Includes notebooks for data exploration and analysis
 
 ## Installation
 
@@ -24,76 +26,147 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
+### Rankings Processor
+
+The main functionality is the rankings processor that consolidates multiple ranking sources:
 
 ```python
-from scripts.fantasy_scraper import scrape_fantasy_data
+from src.rankings_processor import process_fantasy_rankings
 
-# Scrape the default URL (2024 fantasy data)
-df = scrape_fantasy_data()
+# Process rankings with default settings
+output_file = process_fantasy_rankings(
+    data_path="../data/rankings current/update/",
+    player_key_path="../player_key_dict.json",
+    base_data_dir="../data/rankings current/",
+    verbose=True
+)
 
-if df is not None:
-    print(f"Scraped {len(df)} players")
-    print(df.head())
+print(f"Rankings saved to: {output_file}")
 ```
 
-### Custom URL
-
-```python
-# Scrape a different year or page
-df = scrape_fantasy_data("https://www.pro-football-reference.com/years/2023/fantasy.htm")
-```
-
-### Save to CSV
-
-```python
-from scripts.fantasy_scraper import scrape_fantasy_data, save_fantasy_data
-
-df = scrape_fantasy_data()
-if df is not None:
-    save_fantasy_data(df, "my_fantasy_data.csv")
-```
-
-### Run Example
+### Command Line Usage
 
 ```bash
-cd scripts
-python example_usage.py
+cd src
+python rankings_processor.py
 ```
+
+### Data Workflow
+
+The pipeline follows this automated workflow:
+
+1. **Input**: Place new ranking files in `data/rankings current/update/`
+2. **Archive Management**: Existing files in `latest/` are moved to `agg archive/`
+3. **Processing**: Rankings are processed, cleaned, and consolidated
+4. **Output**: Final rankings saved to `data/rankings current/latest/`
+5. **Cleanup**: Source files moved from `update/` to `raw archive/`
 
 ## Data Structure
 
-The scraper extracts the following information for each player:
-- Player name
-- Team
-- Position
-- Age
-- Games played/started
-- Passing stats (completions, attempts, yards, TDs, INTs)
-- Rushing stats (attempts, yards, TDs)
-- Receiving stats (targets, receptions, yards, TDs)
-- Fumbles
-- Scoring
-- Fantasy points (standard, PPR, DraftKings, FanDuel)
-- Position rank and overall rank
+### Input Sources
+- **FPTS**: Fantasy points projections with detailed stats
+- **FantasyPros**: Consensus expert rankings
+- **JJ Zachariason**: Late Round Podcast rankings
+- **DraftShark**: ADP data and rankings
+- **Hayden Winks**: Expert rankings and tiers
 
-## Files
+### Output Format
+The consolidated rankings include:
+- Player ID and standardized names
+- Position and team information
+- ADP data (round, pick, rank)
+- Multiple ranking systems
+- Position-specific ranks
+- VBD calculations (Value-Based Drafting)
 
-- `scripts/fantasy_scraper.py` - Main scraping function
-- `scripts/example_usage.py` - Example usage script
-- `requirements.txt` - Python dependencies
-- `data/` - Directory where scraped data is saved
+### VBD Baselines
+- **QB**: Top 6 (1QB leagues)
+- **RB**: Top 24 (2 RB + 1 Flex)
+- **WR**: Top 30 (2 WR + 1 Flex)
+- **TE**: Top 12 (1 TE)
 
-## Notes
+## Directory Structure
 
-- The scraper uses proper headers to avoid being blocked
-- Includes timeout handling for network requests
-- Handles missing data gracefully
-- Respects the website's robots.txt and terms of service
-- Consider adding delays between requests if scraping multiple pages
+```
+fantasy_data_pipeline/
+├── data/
+│   └── rankings current/
+│       ├── update/          # New ranking files to process
+│       ├── latest/          # Most recent processed rankings
+│       ├── agg archive/     # Historical output files
+│       └── raw archive/     # Historical input files
+├── src/
+│   ├── rankings_processor.py  # Main processing pipeline
+│   └── example_usage.py      # Usage examples
+├── scripts/
+│   ├── load_data.py          # Data loading utilities
+│   ├── clean_cols.py         # Column standardization
+│   └── update_player_key.py  # Player key management
+├── notebooks/
+│   ├── ff-data.ipynb         # Data analysis
+│   ├── ff-player-key.ipynb   # Player key exploration
+│   └── ff-rankings.ipynb     # Rankings analysis
+└── player_key_dict.json     # Player name standardization
+```
+
+## Key Components
+
+### Rankings Processor (`src/rankings_processor.py`)
+- Loads and standardizes data from multiple sources
+- Calculates VBD metrics with position-specific baselines
+- Creates consolidated rankings with multiple scoring systems
+- Manages automated file archiving workflow
+
+### Data Loading (`scripts/load_data.py`)
+- Handles various file formats (CSV, Excel)
+- Provides consistent data loading interface
+
+### Column Standardization (`scripts/clean_cols.py`)
+- Maps column names across different data sources
+- Ensures consistent field naming
+
+### Player Key Management
+- `player_key_dict.json`: Master dictionary for player name standardization
+- `scripts/update_player_key.py`: Tools for maintaining player mappings
+
+## Advanced Features
+
+### Value-Based Drafting (VBD)
+- Calculates positional value relative to replacement level
+- Accounts for league-specific roster requirements
+- Applies QB adjustment factor (50% reduction)
+
+### File Management
+- Timestamped archiving prevents data loss
+- Automated cleanup of processing directories
+- Maintains historical data for analysis
+
+### Multi-Format Support
+- Handles CSV, Excel, and other common formats
+- Flexible data loading with error handling
 
 ## Dependencies
 
-- `requests` - HTTP library for making web requests
-- `lxml` - XML/HTML parser for extracting data
-- `pandas` - Data manipulation and analysis 
+- `pandas` - Data manipulation and analysis
+- `numpy` - Numerical computations
+- `openpyxl` - Excel file support
+- `json` - Player key dictionary management
+- `datetime` - Timestamp generation
+- `shutil` - File operations
+
+## Notes
+
+- Ensure player key dictionary is updated when new players are added
+- Place new ranking files in the `update/` directory before processing
+- The system preserves all historical data in timestamped archive folders
+- VBD calculations can be adjusted by modifying baseline values in the code
+- Processing typically takes 30-60 seconds depending on file sizes
+
+## Example Output
+
+The processor generates consolidated rankings like:
+```
+PLAYER NAME    | POS | ADP ROUND | fpts_RK | fantasypros_RK | VBD
+Christian McCaffrey | RB  | 1        | 2       | 1              | 67.2
+Ja'Marr Chase      | WR  | 1        | 5       | 3              | 52.1
+``` 
