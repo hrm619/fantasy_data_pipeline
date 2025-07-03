@@ -10,6 +10,7 @@ import numpy as np
 import os
 import json
 import sys
+import shutil
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -22,23 +23,25 @@ from scripts.clean_cols import cols_dict
 def process_fantasy_rankings(
     data_path: str = "../data/rankings current/update/",
     player_key_path: str = "../player_key_dict.json",
-    output_dir: str = ".",
+    base_data_dir: str = "../data/rankings current/",
     verbose: bool = True
 ) -> str:
     """
     Process fantasy football rankings from multiple sources and create a consolidated ranking file.
     
     This function:
-    1. Loads ranking files from the specified directory
-    2. Standardizes column names and adds player IDs
-    3. Processes each ranking source with specific calculations
-    4. Creates a consolidated ranking dataframe
-    5. Saves the results to a timestamped CSV file
+    1. Moves existing files from "latest" to "agg archive" if they exist
+    2. Loads ranking files from the "update" directory
+    3. Standardizes column names and adds player IDs
+    4. Processes each ranking source with specific calculations
+    5. Creates a consolidated ranking dataframe
+    6. Saves the results to "latest" folder
+    7. Moves processed files from "update" to "raw archive"
     
     Args:
-        data_path (str): Path to directory containing ranking files
+        data_path (str): Path to directory containing ranking files (update folder)
         player_key_path (str): Path to player key dictionary JSON file
-        output_dir (str): Directory to save output CSV file
+        base_data_dir (str): Base directory containing latest, update, agg archive, and raw archive folders
         verbose (bool): Whether to print detailed progress information
         
     Returns:
@@ -53,9 +56,44 @@ def process_fantasy_rankings(
         print("🏈 Starting Fantasy Football Rankings Processing")
         print("=" * 60)
     
+    # Step 0: Set up directory paths
+    latest_dir = os.path.join(base_data_dir, "latest")
+    agg_archive_dir = os.path.join(base_data_dir, "agg archive")
+    raw_archive_dir = os.path.join(base_data_dir, "raw archive")
+    
+    # Create directories if they don't exist
+    os.makedirs(latest_dir, exist_ok=True)
+    os.makedirs(agg_archive_dir, exist_ok=True)
+    os.makedirs(raw_archive_dir, exist_ok=True)
+    
+    # Step 0.1: Move existing files from "latest" to "agg archive"
+    if verbose:
+        print("📁 Step 0.1: Checking for existing files in 'latest' folder...")
+    
+    if os.path.exists(latest_dir):
+        existing_files = [f for f in os.listdir(latest_dir) if not f.startswith('.')]
+        if existing_files:
+            if verbose:
+                print(f"   Found {len(existing_files)} files in 'latest' folder")
+            
+            # Create timestamped subfolder in agg archive
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            archive_subfolder = os.path.join(agg_archive_dir, f"archived_{timestamp}")
+            os.makedirs(archive_subfolder, exist_ok=True)
+            
+            for file in existing_files:
+                src_path = os.path.join(latest_dir, file)
+                dst_path = os.path.join(archive_subfolder, file)
+                shutil.move(src_path, dst_path)
+                if verbose:
+                    print(f"   ✓ Moved {file} to agg archive")
+        else:
+            if verbose:
+                print("   No files found in 'latest' folder")
+    
     # Step 1: Load and validate input files
     if verbose:
-        print("📁 Step 1: Loading ranking files...")
+        print("\n📁 Step 1: Loading ranking files from 'update' folder...")
     
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Data directory not found: {data_path}")
@@ -288,15 +326,15 @@ def process_fantasy_rankings(
         print(f"   ✓ Filtered from {initial_rows} to {final_rows} rows")
         print(f"   ✓ Kept players with main positions: QB, RB, WR, TE")
     
-    # Step 9: Save results
+    # Step 9: Save results to "latest" folder
     if verbose:
-        print("\n💾 Step 9: Saving results...")
+        print("\n💾 Step 9: Saving results to 'latest' folder...")
     
     # Generate timestamped filename
     current_time = datetime.now()
     timestamp = current_time.strftime("%Y%m%d_%H%M")
     filename = f'df_rank_clean_{timestamp}.csv'
-    output_path = os.path.join(output_dir, filename)
+    output_path = os.path.join(latest_dir, filename)
     
     # Save to CSV
     df_rank.to_csv(output_path, index=False)
@@ -312,6 +350,27 @@ def process_fantasy_rankings(
         for pos, count in pos_counts.items():
             print(f"     {pos}: {count} players")
     
+    # Step 10: Move processed files from "update" to "raw archive"
+    if verbose:
+        print("\n📦 Step 10: Moving processed files to 'raw archive'...")
+    
+    # Create timestamped subfolder in raw archive
+    raw_archive_subfolder = os.path.join(raw_archive_dir, f"processed_{timestamp}")
+    os.makedirs(raw_archive_subfolder, exist_ok=True)
+    
+    files_moved = 0
+    for file in files:
+        src_path = os.path.join(data_path, file)
+        dst_path = os.path.join(raw_archive_subfolder, file)
+        if os.path.exists(src_path):
+            shutil.move(src_path, dst_path)
+            files_moved += 1
+            if verbose:
+                print(f"   ✓ Moved {file} to raw archive")
+    
+    if verbose:
+        print(f"   ✓ Total files moved to raw archive: {files_moved}")
+    
     if verbose:
         print("\n🎉 Rankings processing completed successfully!")
         print("=" * 60)
@@ -325,7 +384,12 @@ def main():
     Can be called directly from command line.
     """
     try:
-        output_file = process_fantasy_rankings(verbose=True)
+        output_file = process_fantasy_rankings(
+            data_path="../data/rankings current/update/",
+            player_key_path="../player_key_dict.json",
+            base_data_dir="../data/rankings current/",
+            verbose=True
+        )
         print(f"\nSuccess! Rankings saved to: {output_file}")
     except Exception as e:
         print(f"\nError processing rankings: {str(e)}")
