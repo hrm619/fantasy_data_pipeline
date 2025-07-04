@@ -19,6 +19,13 @@ sys.path.append(os.path.dirname(os.path.abspath('')))
 from scripts.load_data import load_data
 from scripts.clean_cols import cols_dict
 
+# Add src directory to path for processor imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+from src.fpts_processor import process_fpts_data
+from src.fantasypros_processor import process_fantasypros_data
+from src.draftshark_adp_processor import process_draftshark_adp_data
+from src.draftshark_rank_processor import process_draftshark_rank_data
+
 
 def process_fantasy_rankings(
     data_path: str = "../data/rankings current/update/",
@@ -187,72 +194,20 @@ def process_fantasy_rankings(
     if verbose:
         print("\n📈 Step 5: Processing FPTS data with VBD calculations...")
     
-    baseline_dict = {'QB': 6, 'RB': 24, 'WR': 30, 'TE': 12}
-    
-    def calculate_vbd(row):
-        if pd.isna(row['FPTS']) or row['POS'] not in baseline_dict:
-            return None
-        
-        pos = row['POS']
-        baseline_rank = baseline_dict[pos]
-        
-        # Get all players of the same position, sorted by FPTS descending
-        pos_players = dataframes['fpts'][dataframes['fpts']['POS'] == pos].sort_values('FPTS', ascending=False)
-        
-        if len(pos_players) >= baseline_rank:
-            baseline_fpts = pos_players.iloc[baseline_rank - 1]['FPTS']
-        else:
-            baseline_fpts = 0
-        
-        return row['FPTS'] - baseline_fpts
-    
-    # Calculate VBD and rankings for FPTS
-    dataframes['fpts']['VBD'] = dataframes['fpts'].apply(calculate_vbd, axis=1)
-    
-    # Apply QB adjustment (reduce VBD by 50%)
-    qb_adjustment = 0.50
-    dataframes['fpts'].loc[dataframes['fpts']['POS'] == 'QB', 'VBD'] *= qb_adjustment
-    
-    # Create overall and positional rankings
-    dataframes['fpts']['RK'] = dataframes['fpts']['VBD'].rank(ascending=False, method='min')
-    dataframes['fpts']['POS RANK'] = dataframes['fpts'].groupby('POS')['RK'].rank(method='min')
-    
-    if verbose:
-        print("   ✓ VBD calculations completed")
-        print("   Baseline players for each position:")
-        for pos, baseline_rank in baseline_dict.items():
-            pos_players = dataframes['fpts'][dataframes['fpts']['POS'] == pos].sort_values('FPTS', ascending=False)
-            if len(pos_players) >= baseline_rank:
-                baseline_player = pos_players.iloc[baseline_rank - 1]
-                print(f"     {pos} Baseline (Rank {baseline_rank}): {baseline_player['PLAYER NAME']} - {baseline_player['FPTS']} FPTS")
+    dataframes['fpts'] = process_fpts_data(dataframes['fpts'], verbose)
     
     # Step 6: Process other ranking sources
     if verbose:
         print("\n🔄 Step 6: Processing other ranking sources...")
     
     # Process FantasyPros data
-    dataframes['fantasypros']['POS'] = dataframes['fantasypros']['POS'].str.replace(r'\d+', '', regex=True)
-    dataframes['fantasypros']['POS RANK'] = dataframes['fantasypros'].groupby('POS')['RK'].rank(method='min')
-    if verbose:
-        print("   ✓ FantasyPros rankings processed")
+    dataframes['fantasypros'] = process_fantasypros_data(dataframes['fantasypros'], verbose)
     
     # Process DraftShark ADP data
-    dataframes['draftshark_adp']['SLEEPER ADP'] = dataframes['draftshark_adp']['SLEEPER ADP'].astype(str)
-    dataframes['draftshark_adp']['ADP ROUND'] = dataframes['draftshark_adp']['SLEEPER ADP'].str.split('.').str[0].astype(int)
-    dataframes['draftshark_adp']['ADP ROUND PICK'] = dataframes['draftshark_adp'].index + 1
-    dataframes['draftshark_adp']['ADP ROUND PICK'] = (
-        dataframes['draftshark_adp']['ADP ROUND PICK'] - 
-        ((dataframes['draftshark_adp']['ADP ROUND'] - 1) * 12)
-    )
-    dataframes['draftshark_adp']['ADP RANK'] = dataframes['draftshark_adp'].index + 1
-    if verbose:
-        print("   ✓ DraftShark ADP data processed")
+    dataframes['draftshark_adp'] = process_draftshark_adp_data(dataframes['draftshark_adp'], verbose)
     
     # Process DraftShark Rankings
-    dataframes['draftshark_rank']['RK'] = dataframes['draftshark_rank'].index + 1
-    dataframes['draftshark_rank']['POS RANK'] = dataframes['draftshark_rank'].groupby('POS')['RK'].rank(method='min')
-    if verbose:
-        print("   ✓ DraftShark rankings processed")
+    dataframes['draftshark_rank'] = process_draftshark_rank_data(dataframes['draftshark_rank'], verbose)
     
     # Step 7: Create consolidated ranking dataframe
     if verbose:
