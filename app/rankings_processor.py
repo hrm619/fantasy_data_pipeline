@@ -109,8 +109,8 @@ def process_fantasy_rankings(
     files = [f for f in os.listdir(data_path) if not f.startswith('.')]
     files.sort()
     
-    if len(files) < 3:
-        raise ValueError(f"Expected at least 3 files, found {len(files)} in {data_path}")
+    if len(files) < 1:
+        raise ValueError(f"Expected at least 1 file, found {len(files)} in {data_path}")
     
     if verbose:
         print(f"   Found {len(files)} files to process")
@@ -151,9 +151,9 @@ def process_fantasy_rankings(
         else:
             raise ValueError(f"No file found for key '{key}' with prefix '{gen_file}'")
     
-    # Step 3: Standardize column names
+    # Step 3: Standardize column names and clean player names
     if verbose:
-        print("\n🔧 Step 3: Standardizing column names...")
+        print("\n🔧 Step 3: Standardizing column names and cleaning player names...")
     
     for key, df in dataframes.items():
         if key in cols_dict:
@@ -161,6 +161,18 @@ def process_fantasy_rankings(
             df.columns = cols_dict[key]
             if verbose:
                 print(f"   ✓ Updated {key}: {original_cols} columns standardized")
+        
+        # Clean player names by removing special characters and normalizing suffixes
+        if 'PLAYER NAME' in df.columns:
+            # First normalize common suffixes like "Jr." to "Jr"
+            df['PLAYER NAME'] = df['PLAYER NAME'].str.replace(r'\bJr\.', 'Jr', regex=True)
+            df['PLAYER NAME'] = df['PLAYER NAME'].str.replace(r'\bSr\.', 'Sr', regex=True)
+            # Remove all other special characters except spaces
+            df['PLAYER NAME'] = df['PLAYER NAME'].str.replace(r'[^\w\s]', '', regex=True)
+            # Clean up extra whitespace
+            df['PLAYER NAME'] = df['PLAYER NAME'].str.strip().str.replace(r'\s+', ' ', regex=True)
+            if verbose:
+                print(f"   ✓ Cleaned player names in {key}")
     
     # Step 4: Load player key dictionary and add player IDs
     if verbose:
@@ -180,6 +192,18 @@ def process_fantasy_rankings(
                 player_name_to_key[name] = key
         else:
             player_name_to_key[value] = key
+
+    # Write player_name_to_key mapping to JSON file for debugging/reference
+    if verbose:
+        print("   Writing player name to key mapping to JSON file...")
+    
+    player_name_to_key_path = os.path.join('../data', 'player_name_to_key.json')
+    with open(player_name_to_key_path, 'w') as f:
+        json.dump(player_name_to_key, f, indent=4, sort_keys=True)
+    
+    if verbose:
+        print(f"   ✓ Player name to key mapping saved to: {player_name_to_key_path}")
+        print(f"   ✓ Total mappings created: {len(player_name_to_key)}")
     
     # Add PLAYER ID column to each dataframe
     for key, df in dataframes.items():
