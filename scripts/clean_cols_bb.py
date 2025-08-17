@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.abspath("")))
 
 # set standardized columns
 
+# football reference
 football_ref_cols = [
     'NUMBER',
     'PLAYER NAME',
@@ -43,7 +44,7 @@ football_ref_cols = [
     'PLAYER ID'
 ]
 
-
+# football reference draft
 football_ref_draft_cols = [
     'ROUND',
     'PICK',
@@ -78,88 +79,59 @@ football_ref_draft_cols = [
  ]
 
 
-
+# fantasy points data
 fpts_cols = [
-    'RK',
+    'ID',
+    'ID NUMBER',
     'PLAYER NAME',
     'POS',
     'TEAM',
-    'BYE',
-    'ADP POS',
-    'ADP',
-    'FPTS',
-    'G',
-    'FPTS/G',
-    'TIER',
-    'PASS ATT',
-    'PASS CMP',
-    'PASS YDS',
-    'PASS TD',
-    'PASS INT',
-    'RUSH ATT',
-    'RUSH YDS',
-    'RUSH TD',
-    'REC REC',
-    'REC YDS',
-    'REC TD',
-    'UP',
-    'DOWN',
-    'MOVE',
-    'TARGET',
-    'WIN'
+    'RK',
+    'POSITION',
+    'ADP'
 ]
 
-fantasy_pros_cols = [
-    'RK', 
+# fantasy pros
+fp_cols = [
+    'ECR', 
     'TIER', 
     'PLAYER NAME', 
     'TEAM', 
     'POS', 
-    'BYE', 
-    'SOS', 
+    'BYE',
     'ECR VS ADP'
 ]
 
+# jj zacharaiason
 jj_cols = [
-    'RK', 
+    'ID',
     'PLAYER NAME', 
     'POS', 
-    'POS RANK', 
-    'TIER', 
-    'AUCTION ($200)'
-]
-
-
-draftshark_ADP_cols = [
-    'PLAYER NAME',
-    'TEAM',
-    'POS',
-    'SLEEPER ADP',
-    'MARKET INDEX',
-    'DROP'
-]
-
-
-draftshark_rank_cols = [
-    'PLAYER NAME',
-    'POS',
-    'TEAM',
-    'G',
     'ADP',
+    'TEAM'
+]
+
+# draft sharks
+ds_cols = [
+    'PLAYER NAME',
+    'POS',
+    'TEAM',
+    'UNDERDOG ADP',
     'BYE',
-    'SOS',
-    'INJURY RISK',
-    'FLOOR PROJ',
     'CONS PROJ',
+    'FLOOR PROJ',
     'DS PROJ',
     'CEILING PROJ',
-    '3D VALUE'
+    '3D VALUE',
+    'DROP',
+    'DROP 2'
 ]
 
-hayden_winks_cols = [
+# hayden winks
+hw_cols = [
     'PLAYER NAME',
     'RK',
-    'ADP',
+    'UNDERDOG ADP',
     'DIFF',
     'FINISH-2024',
     'TEAM',
@@ -169,12 +141,20 @@ hayden_winks_cols = [
     'ID'
 ]
 
+# file mapping
+file_lookup = { 
+    "fpts":"BestBallRankingsDraftKings",
+    "fp":"FantasyPros", 
+    "jj":"DKRankings",
+    "ds":"dynasty-rankings",
+    "hw":"tableDownload"}
 
+# cols dictionary
 cols_dict = {
     'fpts':fpts_cols,
-    'fantasypros':fantasy_pros_cols,
+    'fp':fp_cols,
     'jj':jj_cols,
-    'draftshark_adp':draftshark_ADP_cols,
-    'draftshark_rank':draftshark_rank_cols,
-    'hayden_winks':hayden_winks_cols
+    'ds':ds_cols,
+    'hw':hw_cols
 }
+

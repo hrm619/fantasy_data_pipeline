@@ -1,33 +1,34 @@
 """
-Fantasy Football Rankings Processor
+Fantasy Football Rankings Processor: Redraft
 
 This module provides functionality to process fantasy football rankings data from multiple sources,
 clean and standardize the data, calculate various ranking metrics, and output a consolidated CSV file.
 """
 
 import pandas as pd
-import numpy as np
 import os
 import json
 import sys
 import shutil
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 # Add scripts directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from scripts.load_data import load_data
-from scripts.clean_cols import cols_dict
+from scripts.clean_cols_redraft import cols_dict
 
 # Add src directory to path for processor imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 from src.fpts_processor import process_fpts_data
 from src.fp_processor import process_fantasypros_data
-from src.draftshark_adp_processor import process_draftshark_adp_data
 from src.ds_processor import process_draftshark_rank_data
+from src.hw_processor import process_hw_data
+from src.jj_processor import process_jj_data
+from src.pff_processor import process_pff_data
+from src.adp_processor import process_fantasypros_adp_data
 
 
-def process_fantasy_rankings(
+def process_fantasy_rankings_redraft(
     data_path: str = "../data/rankings current/update/",
     player_key_path: str = "../player_key_dict.json",
     base_data_dir: str = "../data/rankings current/",
@@ -121,18 +122,17 @@ def process_fantasy_rankings(
     if verbose:
         print("\n📊 Step 2: Setting up file mapping and loading data...")
     
-    lookup_keys = [
-        "fpts",
-        "fantasypros", 
-        "jj",
-        "draftshark_adp",
-        "draftshark_rank",
-        "hayden_winks"
-    ]
-    
     # Create file mapping based on first 11 characters
-    generalized_files = [f[:11] for f in files[:len(lookup_keys)]]
-    file_lookup = dict(zip(lookup_keys, generalized_files))
+    
+    # TODO: move file_lookup to a config file
+    file_lookup = { 
+        "fpts":"Scott Barrett",
+        "fp":"FantasyPros_2025_Draft_ALL_Rankings", 
+        "jj":"Redraft1QB_",
+        "ds":"rankings-half-ppr",
+        "hw":"tableDownload",
+        "pff":"Draft-rankings-export",
+        "adp":"FantasyPros_2025_Overall_ADP_Rankings"}
     
     if verbose:
         print("   File mapping:")
@@ -214,33 +214,40 @@ def process_fantasy_rankings(
         if verbose:
             print(f"   {key}: {matched_players}/{total_players} players matched ({match_rate:.1f}%)")
     
-    # Step 5: Process FPTS data with VBD calculations
+
+    # Step 5: Process each data source with standardized output
     if verbose:
-        print("\n📈 Step 5: Processing FPTS data with VBD calculations...")
+        print("\n📈 Step 5: Processing all data sources with standardized output...")
     
+    # Process FPTS data with VBD calculations
     dataframes['fpts'] = process_fpts_data(dataframes['fpts'], verbose)
     
-    # Step 6: Process other ranking sources
-    if verbose:
-        print("\n🔄 Step 6: Processing other ranking sources...")
-    
     # Process FantasyPros data
-    dataframes['fantasypros'] = process_fantasypros_data(dataframes['fantasypros'], verbose)
-    
-    # Process DraftShark ADP data
-    dataframes['draftshark_adp'] = process_draftshark_adp_data(dataframes['draftshark_adp'], verbose)
+    dataframes['fp'] = process_fantasypros_data(dataframes['fp'], verbose)
     
     # Process DraftShark Rankings
-    dataframes['draftshark_rank'] = process_draftshark_rank_data(dataframes['draftshark_rank'], verbose)
+    dataframes['ds'] = process_draftshark_rank_data(dataframes['ds'], verbose)
+    
+    # Process HW data
+    dataframes['hw'] = process_hw_data(dataframes['hw'], verbose)
+    
+    # Process JJ data
+    dataframes['jj'] = process_jj_data(dataframes['jj'], verbose)
+    
+    # Process PFF data
+    dataframes['pff'] = process_pff_data(dataframes['pff'], verbose)
+    
+    # Process ADP data
+    dataframes['adp'] = process_fantasypros_adp_data(dataframes['adp'], verbose)
     
     # Step 7: Create consolidated ranking dataframe
     if verbose:
         print("\n🔗 Step 7: Creating consolidated ranking dataframe...")
     
-    # Start with player keys and get base info from fantasypros
+    # Start with player keys and get base info from fp (FantasyPros)
     df_rank = pd.DataFrame({'PLAYER ID': list(player_key_dict.keys())})
     df_rank = df_rank.merge(
-        dataframes['fantasypros'][['PLAYER ID', 'PLAYER NAME', 'POS']], 
+        dataframes['fp'][['PLAYER ID', 'PLAYER NAME', 'POS', 'TEAM']], 
         on='PLAYER ID', 
         how='left'
     )
@@ -248,27 +255,20 @@ def process_fantasy_rankings(
     # Clean player names
     df_rank['PLAYER NAME'] = df_rank['PLAYER NAME'].str.replace(r'[^\w\s]', '', regex=True)
     
-    # Add ADP data
-    df_rank = df_rank.merge(
-        dataframes['draftshark_adp'][['PLAYER ID', 'TEAM', 'ADP ROUND', 'ADP ROUND PICK', 'ADP RANK']],
-        on='PLAYER ID',
-        how='left'
-    )
-    
-    # Merge ranking data from all sources
+    # Merge ranking data from all sources with standardized columns
     for key, df in dataframes.items():
-        columns_to_join = []
+        # All processors now return standardized columns: RK, POS RANK, TIER, ADP
+        columns_to_join = ['RK', 'POS RANK', 'TIER', 'ADP', 'ECR', 'POS ECR']
         
-        # Check for relevant columns
-        if 'RK' in df.columns:
-            columns_to_join.append('RK')
-        if 'POS RANK' in df.columns:
-            columns_to_join.append('POS RANK')
-        if 'TIER' in df.columns:
-            columns_to_join.append('TIER')
+        # For ADP source, also include ADP ROUND
+        if key == 'adp':
+            columns_to_join.append('ADP ROUND')
         
-        if columns_to_join:
-            join_columns = ['PLAYER ID'] + columns_to_join
+        # Only join columns that exist and have data
+        available_columns = [col for col in columns_to_join if col in df.columns]
+        
+        if available_columns:
+            join_columns = ['PLAYER ID'] + available_columns
             df_rank = df_rank.merge(
                 df[join_columns],
                 on='PLAYER ID',
@@ -276,74 +276,133 @@ def process_fantasy_rankings(
                 suffixes=('', f'_{key}')
             )
             
-            # Rename columns with prefix
-            rename_dict = {col: f'{key}_{col}' for col in columns_to_join}
-            df_rank = df_rank.rename(columns=rename_dict)
+            # Only add prefixes for RK, POS RANK, and TIER columns
+            rename_dict = {}
+            for col in available_columns:
+                # Only add prefixes to these specific columns
+                if col in ['RK', 'POS RANK', 'TIER']:
+                    if f'{col}_{key}' in df_rank.columns:
+                        rename_dict[f'{col}_{key}'] = f'{key}_{col}'
+                    elif col in df_rank.columns:
+                        # This is the first occurrence, add prefix
+                        rename_dict[col] = f'{key}_{col}'
+                # All other columns (ADP, ADP ROUND, ECR, POS ECR) stay without prefix
+            
+            if rename_dict:
+                df_rank = df_rank.rename(columns=rename_dict)
     
-    # Step 7.1: Calculate Average Rankings
+    # Step 8: Calculate Average Rankings
     if verbose:
-        print("\n📊 Step 7.1: Calculating average rankings...")
+        print("\n📊 Step 8: Calculating average rankings...")
     
-    # 1. Calculate avg_RK (average of columns with 'RK' in title, excluding POS RANK columns)
-    rk_columns_for_avg = [col for col in df_rank.columns if 'RK' in col and 'POS' not in col]
+    # 1. Calculate avg_RK (average of columns with '_RK' in title, excluding POS RANK columns)
+    rk_columns_for_avg = [col for col in df_rank.columns if '_RK' in col and 'POS' not in col]
     if rk_columns_for_avg:
         df_rank['avg_RK'] = df_rank[rk_columns_for_avg].mean(axis=1, skipna=True)
         if verbose:
-            print(f"   ✓ Calculated avg_RK from {len(rk_columns_for_avg)} ranking columns")
+            print(f"   ✓ Calculated avg_RK from {len(rk_columns_for_avg)} ranking columns: {rk_columns_for_avg}")
     else:
         df_rank['avg_RK'] = None
         if verbose:
-            print("   ⚠ No RK columns found for avg_RK calculation")
+            print("   ⚠ No _RK columns found for avg_RK calculation")
     
-    # 2. Calculate avg_POS RANK (average of columns with 'POS RANK' in title)
-    pos_rank_columns_for_avg = [col for col in df_rank.columns if 'POS RANK' in col]
+    # 2. Calculate avg_POS RANK (average of columns with '_POS RANK' in title)
+    pos_rank_columns_for_avg = [col for col in df_rank.columns if '_POS RANK' in col]
     if pos_rank_columns_for_avg:
         df_rank['avg_POS RANK'] = df_rank[pos_rank_columns_for_avg].mean(axis=1, skipna=True)
         if verbose:
-            print(f"   ✓ Calculated avg_POS RANK from {len(pos_rank_columns_for_avg)} position ranking columns")
+            print(f"   ✓ Calculated avg_POS RANK from {len(pos_rank_columns_for_avg)} position ranking columns: {pos_rank_columns_for_avg}")
     else:
         df_rank['avg_POS RANK'] = None
         if verbose:
-            print("   ⚠ No POS RANK columns found for avg_POS RANK calculation")
+            print("   ⚠ No _POS RANK columns found for avg_POS RANK calculation")
     
-    # 3. Calculate pos_ADP (positional rankings based on ADP RANK)
-    if 'ADP RANK' in df_rank.columns:
-        # Create positional ADP rankings by grouping by position and ranking ADP RANK
-        df_rank['pos_ADP'] = df_rank.groupby('POS')['ADP RANK'].rank(method='min', na_option='keep').astype('Int64')
+    # 3. Calculate pos_ADP (positional rankings based on the ADP column)
+    if 'ADP' in df_rank.columns and df_rank['ADP'].notna().any():
+        df_rank['POS ADP'] = df_rank.groupby('POS')['ADP'].rank(method='min', na_option='keep').astype('Int64')
         if verbose:
             print("   ✓ Calculated pos_ADP (positional rankings based on ADP)")
             # Show breakdown by position
             for pos in df_rank['POS'].unique():
                 if pd.notna(pos):
-                    pos_data = df_rank[df_rank['POS'] == pos]['pos_ADP'].dropna()
+                    pos_data = df_rank[df_rank['POS'] == pos]['POS ADP'].dropna()
                     if len(pos_data) > 0:
                         print(f"     {pos}: {len(pos_data)} players ranked 1-{int(pos_data.max())}")
     else:
-        df_rank['pos_ADP'] = None
+        df_rank['POS ADP'] = None
         if verbose:
-            print("   ⚠ ADP RANK column not found for pos_ADP calculation")
+            print("   ⚠ ADP column not found or has no data for pos_ADP calculation")
 
 
-    # Step 8: Organize and clean final dataframe
+
+    # Step 9: Organize and clean final dataframe
     if verbose:
-        print("\n📋 Step 8: Organizing and cleaning final dataframe...")
+        print("\n📋 Step 9: Organizing and cleaning final dataframe...")
     
     # Reorder columns logically
     all_columns = list(df_rank.columns)
-    adp_columns = [col for col in all_columns if 'ADP' in col]
-    rk_columns = [col for col in all_columns if 'RK' in col and 'POS' not in col]
-    pos_rank_columns = [col for col in all_columns if 'POS RANK' in col]
-    tier_columns = [col for col in all_columns if 'TIER' in col]
-    other_columns = [col for col in all_columns if col not in rk_columns + pos_rank_columns + tier_columns + adp_columns]
+    base_columns = ['PLAYER ID', 'PLAYER NAME', 'POS', 'TEAM']
     
-    reordered_columns = other_columns + adp_columns + rk_columns + pos_rank_columns + tier_columns
+    # ADP ROUND column
+    adp_round_columns = ['ADP ROUND'] if 'ADP ROUND' in all_columns else []
+    
+    # ADP column (should be clean without prefix)
+    adp_columns = ['ADP'] if 'ADP' in all_columns else []
+
+    # ECR column
+    df_rank['ECR ADP Delta'] = df_rank['ADP'] - df_rank['ECR']
+    ecr_columns = ['ECR', 'ECR ADP Delta']
+
+    # Regular RK columns (excluding average)
+    rk_columns = [col for col in all_columns if '_RK' in col and not col.startswith('avg_')]
+    
+    # RK columns
+    df_rank['sd_RK'] = df_rank[rk_columns].std(axis=1, skipna=True)
+    df_rank['ADP Delta'] = df_rank['ADP'] - df_rank['avg_RK']
+    df_rank['ECR Delta'] = df_rank['ECR'] - df_rank['avg_RK']
+    rk_calcs = ['avg_RK', 'sd_RK', 'ADP Delta', 'ECR Delta']
+
+    # Tier columns
+    tier_columns = [col for col in all_columns if '_TIER' in col] 
+    
+    # POS ECR column
+    pos_ecr_columns = ['POS ECR'] if 'POS ECR' in all_columns else []
+
+    # Regular positional rank columns (excluding average)
+    pos_rank_columns = [col for col in all_columns if '_POS RANK' in col and not col.startswith('avg_')]
+    
+    # Average positional rank columns
+    avg_pos_rank_columns = [col for col in all_columns if col.startswith('avg_') and 'POS' in col]
+    
+    # positional ADP column
+    pos_adp_columns = ['POS ADP'] if 'POS ADP' in all_columns else []
+
+    
+    # Any remaining columns not categorized above
+    categorized_columns = (base_columns + 
+                           adp_round_columns + 
+                           adp_columns + 
+                           ecr_columns + 
+                           rk_calcs + 
+                           rk_columns + 
+                           tier_columns + 
+                           pos_adp_columns + 
+                           pos_ecr_columns + 
+                           avg_pos_rank_columns +   
+                           pos_rank_columns)
+    other_columns = [col for col in all_columns if col not in categorized_columns]
+    
+    # Reorder columns according to specified order
+    reordered_columns = categorized_columns + other_columns
     df_rank = df_rank[reordered_columns]
     
     # Filter to main positions and remove rows without essential data
     initial_rows = len(df_rank)
-    df_rank = df_rank.dropna(subset=['PLAYER NAME', 'ADP ROUND'])
+    df_rank = df_rank.dropna(subset=['ADP'])
     df_rank = df_rank[df_rank['POS'].isin(['WR', 'RB', 'QB', 'TE'])]
     final_rows = len(df_rank)
+    # Sort by ADP in ascending order (best/earliest picks first)
+    df_rank = df_rank.sort_values('ADP', ascending=True).reset_index(drop=True)
     
     if verbose:
         print(f"   ✓ Filtered from {initial_rows} to {final_rows} rows")
@@ -356,7 +415,7 @@ def process_fantasy_rankings(
     # Generate timestamped filename
     current_time = datetime.now()
     timestamp = current_time.strftime("%Y%m%d_%H%M")
-    filename = f'df_rank_clean_{timestamp}.csv'
+    filename = f'df_rank_clean_{timestamp}_redraft.csv'
     output_path = os.path.join(latest_dir, filename)
     
     # Save to CSV
@@ -407,7 +466,7 @@ def main():
     Can be called directly from command line.
     """
     try:
-        output_file = process_fantasy_rankings(
+        output_file = process_fantasy_rankings_redraft(
             data_path="../data/rankings current/update/",
             player_key_path="../player_key_dict.json",
             base_data_dir="../data/rankings current/",

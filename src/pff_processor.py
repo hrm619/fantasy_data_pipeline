@@ -1,17 +1,17 @@
 """
-FPTS Data Processor
+PFF Data Processor
 
-Handles FPTS ranking data processing including position cleaning
+Handles PFF (Pro Football Focus) ranking data processing including rank assignments
 and positional ranking calculations.
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional
 
-def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+
+def process_pff_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
-    Process FPTS ranking data and return standardized columns.
+    Process PFF ranking data and return standardized columns.
     
     This function:
     1. Assigns overall rank based on order (index + 1) if not present
@@ -19,7 +19,7 @@ def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     3. Returns standardized columns: PLAYER NAME, PLAYER ID, POS, TEAM, RK, POS RANK, TIER, ADP
     
     Args:
-        df (pd.DataFrame): DataFrame containing FPTS ranking data with columns:
+        df (pd.DataFrame): DataFrame containing PFF ranking data with columns:
                           PLAYER NAME, PLAYER ID, POS, TEAM, and optionally RK, TIER, ADP
         verbose (bool): Whether to print progress information
         
@@ -27,7 +27,7 @@ def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
         pd.DataFrame: Processed DataFrame with standardized columns
     """
     if verbose:
-        print("🔄 Processing FPTS ranking data...")
+        print("🔄 Processing PFF ranking data...")
     
     # Make a copy to avoid modifying original
     df_processed = df.copy()
@@ -67,7 +67,7 @@ def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     result_df = df_processed[final_columns].copy()
     
     if verbose:
-        print("   ✓ FPTS rankings processed")
+        print("   ✓ PFF rankings processed")
         
         # Show ranking statistics
         print(f"   Total players ranked: {len(result_df)}")
@@ -91,12 +91,12 @@ def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     return result_df
 
 
-def get_fpts_summary(df: pd.DataFrame) -> pd.DataFrame:
+def get_pff_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     Get ranking summary statistics by position.
     
     Args:
-        df (pd.DataFrame): DataFrame with FPTS ranking data
+        df (pd.DataFrame): DataFrame with PFF ranking data
         
     Returns:
         pd.DataFrame: Summary statistics by position
@@ -111,12 +111,12 @@ def get_fpts_summary(df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-def validate_fpts_rankings(df: pd.DataFrame) -> dict:
+def validate_pff_rankings(df: pd.DataFrame) -> dict:
     """
-    Validate FPTS ranking data for consistency.
+    Validate PFF ranking data for consistency.
     
     Args:
-        df (pd.DataFrame): DataFrame with FPTS ranking data
+        df (pd.DataFrame): DataFrame with PFF ranking data
         
     Returns:
         dict: Validation results

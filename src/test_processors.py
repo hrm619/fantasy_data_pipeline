@@ -13,10 +13,9 @@ import os
 # Add current directory to path
 sys.path.append(os.path.dirname(__file__))
 
-from fpts_processor import process_fpts_data, get_baseline_info
-from fantasypros_processor import process_fantasypros_data, get_position_summary
-from draftshark_adp_processor import process_draftshark_adp_data, get_adp_summary
-from draftshark_rank_processor import process_draftshark_rank_data, validate_rankings
+from fpts_processor import process_fpts_data, get_fpts_summary
+from fp_processor import process_fantasypros_data, get_position_summary
+from ds_processor import process_draftshark_rank_data, validate_rankings
 from utils import validate_dataframe, print_processing_summary
 
 
@@ -74,12 +73,13 @@ def test_fpts_processor():
     processed_df = process_fpts_data(df.copy(), verbose=True)
     
     print("\nProcessed data:")
-    print(processed_df[['PLAYER NAME', 'POS', 'FPTS', 'VBD', 'RK', 'POS RANK']])
+    print(f"Columns available: {list(processed_df.columns)}")
+    print(processed_df[['PLAYER NAME', 'POS', 'RK', 'POS RANK']])
     
-    # Get baseline info
-    baseline_info = get_baseline_info(processed_df)
-    print("\nBaseline info:")
-    print(baseline_info)
+    # Get summary info
+    summary_info = get_fpts_summary(processed_df)
+    print("\nSummary info:")
+    print(summary_info)
     
     return processed_df
 
@@ -109,24 +109,7 @@ def test_fantasypros_processor():
     return processed_df
 
 
-def test_adp_processor():
-    """Test the DraftShark ADP processor."""
-    print("\n🧪 Testing DraftShark ADP Processor")
-    print("=" * 40)
-    
-    # Create and process sample data
-    df = create_sample_adp_data()
-    
-    print("Original data:")
-    print(df)
-    
-    # Process the data
-    processed_df = process_draftshark_adp_data(df.copy(), verbose=True)
-    
-    print("\nProcessed data:")
-    print(processed_df[['PLAYER NAME', 'SLEEPER ADP', 'ADP ROUND', 'ADP ROUND PICK', 'ADP RANK']])
-    
-    return processed_df
+
 
 
 def test_rank_processor():
@@ -163,7 +146,6 @@ def main():
         # Test each processor
         fpts_result = test_fpts_processor()
         fp_result = test_fantasypros_processor()
-        adp_result = test_adp_processor()
         rank_result = test_rank_processor()
         
         print("\n" + "=" * 60)
