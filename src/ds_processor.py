@@ -31,13 +31,25 @@ def process_draftshark_rank_data(df: pd.DataFrame, verbose: bool = True) -> pd.D
     
     # Make a copy to avoid modifying original
     df_processed = df.copy()
+
+    # Filter to main fantasy positions only
+    initial_rows = len(df_processed)
+    df_processed = df_processed[df_processed['POS'].isin(['QB', 'WR', 'RB', 'TE'])]
+    filtered_rows = len(df_processed)
     
-    # Assign overall rank based on index (assuming data is pre-sorted) if not present
-    if 'RK' not in df_processed.columns:
-        df_processed['RK'] = df_processed.index + 1
-        if verbose:
-            print("   ✓ Created RK column using index values")
+    if verbose:
+        print(f"   ✓ Filtered from {initial_rows} to {filtered_rows} rows (keeping QB, WR, RB, TE only)")
+
+
+    # Reset the overall rank (RK) based on the filtered data's index order
+    # This ensures ranks are sequential starting from 1 after filtering positions
+    df_processed = df_processed.reset_index(drop=True)
+    df_processed['RK'] = df_processed.index + 1
     
+    if verbose:
+        print("   ✓ Reset RK column to sequential order after position filtering")
+    
+
     # Ensure RK is integer type
     df_processed['RK'] = df_processed['RK'].astype('Int64')
     
