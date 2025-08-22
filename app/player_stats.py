@@ -12,9 +12,19 @@ import os
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 
-# Import from src module using relative imports
-from ..src.season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
-from ..src.weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
+# Add src directory to path for imports
+import sys
+src_path = os.path.join(os.path.dirname(__file__), '..', 'src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
+try:
+    from src.season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
+    from src.weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
+except ImportError:
+    # Fallback for runtime execution
+    from season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
+    from weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
 
 
 def aggregate_player_historical_stats(
@@ -540,6 +550,111 @@ def save_historical_stats(df: pd.DataFrame,
     return output_path
 
 
+def merge_with_redraft_rankings(rankings_file_path: str,
+                               historical_stats_df: Optional[pd.DataFrame] = None,
+                               historical_stats_file_path: Optional[str] = None,
+                               output_dir: Optional[str] = None,
+                               verbose: bool = True) -> pd.DataFrame:
+    """
+    Merge historical stats with redraft rankings output.
+    
+    This function takes a redraft rankings CSV file and merges it with historical stats
+    to create an enhanced rankings dataset with historical performance data.
+    
+    Args:
+        rankings_file_path (str): Path to the redraft rankings CSV file
+        historical_stats_df (Optional[pd.DataFrame]): Historical stats DataFrame (if already loaded)
+        historical_stats_file_path (Optional[str]): Path to historical stats CSV (if not loaded)
+        output_dir (Optional[str]): Directory to save merged output (if None, no file saved)
+        verbose (bool): Whether to print progress information
+        
+    Returns:
+        pd.DataFrame: Merged DataFrame with rankings and historical stats
+    """
+    if verbose:
+        print("🔗 Merging historical stats with redraft rankings...")
+    
+    # Load rankings data
+    try:
+        rankings_df = pd.read_csv(rankings_file_path)
+        if verbose:
+            print(f"   ✓ Loaded rankings data: {len(rankings_df)} players")
+    except Exception as e:
+        raise FileNotFoundError(f"Could not load rankings from {rankings_file_path}: {e}")
+    
+    # Load historical stats data
+    if historical_stats_df is not None:
+        hist_df = historical_stats_df.copy()
+        if verbose:
+            print(f"   ✓ Using provided historical stats: {len(hist_df)} players")
+    elif historical_stats_file_path is not None:
+        try:
+            hist_df = pd.read_csv(historical_stats_file_path)
+            if verbose:
+                print(f"   ✓ Loaded historical stats: {len(hist_df)} players")
+        except Exception as e:
+            raise FileNotFoundError(f"Could not load historical stats from {historical_stats_file_path}: {e}")
+    else:
+        raise ValueError("Must provide either historical_stats_df or historical_stats_file_path")
+    
+    # Ensure we have the right column name for merging (redraft uses "PLAYER ID" with space)
+    rankings_id_col = 'PLAYER ID' if 'PLAYER ID' in rankings_df.columns else 'PLAYER_ID'
+    hist_id_col = 'PLAYER ID' if 'PLAYER ID' in hist_df.columns else 'PLAYER_ID'
+    
+    if rankings_id_col not in rankings_df.columns:
+        raise ValueError(f"Rankings file must have 'PLAYER ID' or 'PLAYER_ID' column")
+    if hist_id_col not in hist_df.columns:
+        raise ValueError(f"Historical stats must have 'PLAYER ID' or 'PLAYER_ID' column")
+    
+    # Standardize to "PLAYER ID" (with space) for consistency with redraft pipeline
+    if rankings_id_col != 'PLAYER ID':
+        rankings_df = rankings_df.rename(columns={rankings_id_col: 'PLAYER ID'})
+    if hist_id_col != 'PLAYER ID':
+        hist_df = hist_df.rename(columns={hist_id_col: 'PLAYER ID'})
+    
+    # Select only historical stats columns (exclude basic player info to avoid duplicates)
+    hist_columns_to_merge = ['PLAYER ID'] + [col for col in hist_df.columns 
+                                            if col.startswith('HIST_')]
+    hist_df_clean = hist_df[hist_columns_to_merge]
+    
+    # Merge the data
+    merged_df = rankings_df.merge(
+        hist_df_clean,
+        on='PLAYER ID',
+        how='left'
+    )
+    
+    # Calculate merge statistics
+    initial_count = len(rankings_df)
+    hist_data_count = merged_df[merged_df.columns[merged_df.columns.str.startswith('HIST_')]].notna().any(axis=1).sum()
+    hist_data_rate = (hist_data_count / initial_count * 100) if initial_count > 0 else 0
+    
+    if verbose:
+        print(f"   ✓ Merged {initial_count} rankings with historical stats")
+        print(f"   ✓ {hist_data_count}/{initial_count} players have historical data ({hist_data_rate:.1f}%)")
+        print(f"   ✓ Added {len([col for col in merged_df.columns if col.startswith('HIST_')])} historical stat columns")
+    
+    # Save merged results if output directory specified
+    if output_dir is not None:
+        # Generate timestamped filename
+        current_time = datetime.now()
+        timestamp = current_time.strftime("%Y%m%d_%H%M")
+        filename = f'df_rank_clean_{timestamp}_redraft_with_hist.csv'
+        output_path = os.path.join(output_dir, filename)
+        
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save to CSV
+        merged_df.to_csv(output_path, index=False)
+        
+        if verbose:
+            print(f"   💾 Merged rankings saved to: {output_path}")
+            print(f"   ✓ Final dataset: {len(merged_df)} players with {len(merged_df.columns)} columns")
+    
+    return merged_df
+
+
 def create_rankings_ready_dataset(aggregated_df: pd.DataFrame, 
                                 current_season: str = "2024",
                                 min_games: int = 8,
@@ -598,9 +713,13 @@ def create_rankings_ready_dataset(aggregated_df: pd.DataFrame,
     available_columns = [col for col in rankings_columns if col in df.columns]
     result_df = df[available_columns].copy()
     
+    # Standardize PLAYER_ID column name to match redraft pipeline (with space)
+    if 'PLAYER_ID' in result_df.columns:
+        result_df = result_df.rename(columns={'PLAYER_ID': 'PLAYER ID'})
+    
     # Add prefix to distinguish historical stats in rankings
     history_columns = [col for col in result_df.columns 
-                      if col not in ['PLAYER_ID', 'PLAYER NAME', 'POS', 'TEAM']]
+                      if col not in ['PLAYER ID', 'PLAYER NAME', 'POS', 'TEAM']]
     
     rename_dict = {col: f'HIST_{col}' for col in history_columns}
     result_df = result_df.rename(columns=rename_dict)

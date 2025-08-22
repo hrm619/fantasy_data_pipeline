@@ -164,7 +164,8 @@ adp_cols = [
     'BYE',
     'POS',
     'ADP',
-    'MARKET INDEX'
+    'MARKET INDEX',
+    'RT'
 ]
 
 

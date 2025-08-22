@@ -29,9 +29,9 @@ from src.adp_processor import process_fantasypros_adp_data
 
 
 def process_fantasy_rankings_redraft(
-    data_path: str = "../data/rankings current/update/",
-    player_key_path: str = "../player_key_dict.json",
-    base_data_dir: str = "../data/rankings current/",
+    data_path: str = "data/rankings current/update/",
+    player_key_path: str = "player_key_dict.json",
+    base_data_dir: str = "data/rankings current/",
     verbose: bool = True
 ) -> str:
     """
@@ -80,16 +80,22 @@ def process_fantasy_rankings_redraft(
     
     if os.path.exists(latest_dir):
         existing_files = [f for f in os.listdir(latest_dir) if not f.startswith('.')]
-        if existing_files:
+        # Keep historical stats files in place for merging
+        files_to_archive = [f for f in existing_files if not f.startswith('rankings_ready_historical_stats_')]
+        
+        if files_to_archive:
             if verbose:
                 print(f"   Found {len(existing_files)} files in 'latest' folder")
+                if len(existing_files) > len(files_to_archive):
+                    historical_files = [f for f in existing_files if f.startswith('rankings_ready_historical_stats_')]
+                    print(f"   Keeping {len(historical_files)} historical stats files for merging")
             
             # Create timestamped subfolder in agg archive
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             archive_subfolder = os.path.join(agg_archive_dir, f"archived_{timestamp}")
             os.makedirs(archive_subfolder, exist_ok=True)
             
-            for file in existing_files:
+            for file in files_to_archive:
                 src_path = os.path.join(latest_dir, file)
                 dst_path = os.path.join(archive_subfolder, file)
                 shutil.move(src_path, dst_path)
@@ -157,10 +163,18 @@ def process_fantasy_rankings_redraft(
     
     for key, df in dataframes.items():
         if key in cols_dict:
-            original_cols = len(df.columns)
-            df.columns = cols_dict[key]
-            if verbose:
-                print(f"   ✓ Updated {key}: {original_cols} columns standardized")
+            expected_cols = cols_dict[key]
+            if len(df.columns) == len(expected_cols):
+                df.columns = expected_cols
+                if verbose:
+                    print(f"   ✓ Updated {key}: {len(df.columns)} columns standardized")
+            else:
+                if verbose:
+                    print(f"   ⚠️  Column count mismatch for {key}: expected {len(expected_cols)}, got {len(df.columns)}")
+                    print(f"        Expected: {expected_cols}")
+                    print(f"        Actual columns: {list(df.columns)}")
+                # Skip column renaming for this file
+                continue
         
         # Clean player names by removing special characters and normalizing suffixes
         if 'PLAYER NAME' in df.columns:
@@ -197,7 +211,7 @@ def process_fantasy_rankings_redraft(
     if verbose:
         print("   Writing player name to key mapping to JSON file...")
     
-    player_name_to_key_path = os.path.join('../data', 'player_name_to_key.json')
+    player_name_to_key_path = os.path.join('data', 'player_name_to_key.json')
     with open(player_name_to_key_path, 'w') as f:
         json.dump(player_name_to_key, f, indent=4, sort_keys=True)
     
@@ -408,6 +422,50 @@ def process_fantasy_rankings_redraft(
         print(f"   ✓ Filtered from {initial_rows} to {final_rows} rows")
         print(f"   ✓ Kept players with main positions: QB, RB, WR, TE")
     
+    # Step 8.5: Merge historical stats if available
+    if verbose:
+        print("\n📊 Step 8.5: Checking for historical stats to merge...")
+    
+    # Look for the latest historical stats file
+    historical_stats_files = [f for f in os.listdir(latest_dir) if f.startswith('rankings_ready_historical_stats_') and f.endswith('.csv')]
+    
+    if historical_stats_files:
+        # Get the most recent historical stats file
+        latest_hist_file = sorted(historical_stats_files)[-1]
+        hist_file_path = os.path.join(latest_dir, latest_hist_file)
+        
+        try:
+            # Load historical stats
+            hist_df = pd.read_csv(hist_file_path)
+            
+            # Standardize column name for merging
+            if 'PLAYER ID' in hist_df.columns:
+                hist_df = hist_df.rename(columns={'PLAYER ID': 'PLAYER ID'})
+            
+            # Select only historical stats columns (avoid duplicates)
+            hist_columns_to_merge = ['PLAYER ID'] + [col for col in hist_df.columns if col.startswith('HIST_')]
+            hist_df_clean = hist_df[hist_columns_to_merge]
+            
+            # Merge with rankings
+            initial_cols = len(df_rank.columns)
+            df_rank = df_rank.merge(hist_df_clean, on='PLAYER ID', how='left')
+            
+            # Calculate merge statistics
+            hist_data_count = df_rank[df_rank.columns[df_rank.columns.str.startswith('HIST_')]].notna().any(axis=1).sum()
+            hist_data_rate = (hist_data_count / len(df_rank) * 100) if len(df_rank) > 0 else 0
+            
+            if verbose:
+                print(f"   ✓ Found and merged historical stats from: {hist_file_path}")
+                print(f"   ✓ Added {len(df_rank.columns) - initial_cols} historical stat columns")
+                print(f"   ✓ {hist_data_count}/{len(df_rank)} players have historical data ({hist_data_rate:.1f}%)")
+                
+        except Exception as e:
+            if verbose:
+                print(f"   ⚠️  Could not load historical stats from {hist_file_path}: {e}")
+    else:
+        if verbose:
+            print("   ℹ️  No historical stats files found (run player_stats.py first)")
+    
     # Step 9: Save results to "latest" folder
     if verbose:
         print("\n💾 Step 9: Saving results to 'latest' folder...")
@@ -467,9 +525,9 @@ def main():
     """
     try:
         output_file = process_fantasy_rankings_redraft(
-            data_path="../data/rankings current/update/",
-            player_key_path="../player_key_dict.json",
-            base_data_dir="../data/rankings current/",
+            data_path="data/rankings current/update/",
+            player_key_path="player_key_dict.json",
+            base_data_dir="data/rankings current/",
             verbose=True
         )
         print(f"\nSuccess! Rankings saved to: {output_file}")
