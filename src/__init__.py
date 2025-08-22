@@ -12,6 +12,8 @@ from .hw_processor import process_hw_data, get_hw_summary, validate_hw_rankings
 from .jj_processor import process_jj_data, get_jj_summary, validate_jj_rankings
 from .pff_processor import process_pff_data, get_pff_summary, validate_pff_rankings
 from .adp_processor import process_fantasypros_adp_data, get_adp_summary, validate_adp
+from .season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
+from .weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
 
 __all__ = [
     # FPTS processor
@@ -47,4 +49,15 @@ __all__ = [
     'process_fantasypros_adp_data',
     'get_adp_summary',
     'validate_adp',
+    
+    # Season stats processor
+    'calculate_season_stats',
+    'get_season_stats_summary',
+    'validate_season_stats',
+    
+    # Weekly stats processor
+    'calculate_weekly_trends',
+    'get_weekly_trends_summary',
+    'validate_weekly_trends',
+    'compare_half_season_performance',
 ] 
