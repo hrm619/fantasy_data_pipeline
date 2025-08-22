@@ -8,24 +8,13 @@ that can be merged into the rankings pipeline.
 
 import pandas as pd
 import numpy as np
-import sys
 import os
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 
-# Add src directory to path for imports
-src_path = os.path.join(os.path.dirname(__file__), '..', 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-
-try:
-    from season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
-    from weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
-except ImportError:
-    # Fallback for different import paths
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-    from season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
-    from weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
+# Import from src module using relative imports
+from ..src.season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
+from ..src.weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
 
 
 def aggregate_player_historical_stats(
