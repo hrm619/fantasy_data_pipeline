@@ -12,6 +12,14 @@ A comprehensive Python pipeline for processing fantasy football rankings data fr
 - **Historical Data Preservation**: Archives processed files with timestamps
 - **Jupyter Notebook Analysis**: Includes notebooks for data exploration and analysis
 
+## 📚 Documentation
+
+Complete documentation is available in the [`docs/`](docs/) directory:
+
+- **[📖 API Reference](docs/api/source-library.md)** - Complete source library documentation
+- **[🛠 Development Docs](docs/development/)** - Architecture and consolidation details  
+- **[📝 Documentation Index](docs/README.md)** - Full documentation navigation
+
 ## Installation
 
 1. Install dependencies using uv (recommended):
@@ -28,18 +36,14 @@ pip install -r requirements.txt
 
 ### Rankings Processor
 
-The main functionality is the rankings processor that consolidates multiple ranking sources:
+The main functionality is the unified rankings processor that consolidates multiple ranking sources:
 
 ```python
-from src.rankings_processor import process_fantasy_rankings
+from src import RankingsProcessor
 
-# Process rankings with default settings
-output_file = process_fantasy_rankings(
-    data_path="../data/rankings current/update/",
-    player_key_path="../player_key_dict.json",
-    base_data_dir="../data/rankings current/",
-    verbose=True
-)
+# Process rankings with simplified API
+processor = RankingsProcessor('redraft')  # or 'bestball'
+output_file = processor.process_rankings()
 
 print(f"Rankings saved to: {output_file}")
 ```
@@ -47,8 +51,14 @@ print(f"Rankings saved to: {output_file}")
 ### Command Line Usage
 
 ```bash
-cd src
-python rankings_processor.py
+# Process redraft rankings (default)
+python app/rankings.py
+
+# Process bestball rankings  
+python app/rankings.py --league-type bestball
+
+# With custom paths
+python app/rankings.py --data-path "custom/update/path" --quiet
 ```
 
 ### Data Workflow

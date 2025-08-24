@@ -20,7 +20,7 @@ src/adp_processor.py       - 128 lines
 
 **After**: 1 unified file (190 lines)
 ```
-lib/base_processor.py      - 190 lines (includes ALL functionality)
+src/base_processor.py      - 190 lines (includes ALL functionality)
 ```
 
 **Functions Still Available**:
@@ -42,7 +42,7 @@ app/bb_rankings_processor.py      - 657 lines
 
 **After**: 1 unified file (532 lines)
 ```
-lib/rankings_processor.py         - 532 lines (handles ALL league types)
+src/rankings_processor.py         - 532 lines (handles ALL league types)
 ```
 
 **Functions Still Available**:
@@ -59,7 +59,7 @@ scripts/clean_cols_bb.py          - 161 lines
 
 **After**: 1 centralized config
 ```
-lib/config.py                     - 86 lines (ALL mappings)
+src/config.py                     - 86 lines (ALL mappings)
 ```
 
 ### 4. **Data Loading**
@@ -70,7 +70,7 @@ scripts/load_data.py               - 83 lines
 
 **After**: 
 ```
-lib/data_loader.py                 - 74 lines (same functionality)
+src/data_loader.py                 - 74 lines (same functionality)
 ```
 
 ## 🔧 **What Was Actually Removed**
@@ -84,7 +84,7 @@ Only truly redundant files were removed:
 
 ### Test 1: All Processor Functions Available
 ```python
-from lib.base_processor import (
+from src.base_processor import (
     process_fpts_data, process_fantasypros_data, process_hw_data,
     process_jj_data, process_pff_data, process_draftshark_rank_data, 
     process_fantasypros_adp_data
@@ -94,7 +94,7 @@ from lib.base_processor import (
 
 ### Test 2: Configuration Available
 ```python
-from lib.config import COLUMN_MAPPINGS, FILE_MAPPINGS
+from src.config import COLUMN_MAPPINGS, FILE_MAPPINGS
 # ✅ ALL MAPPINGS AVAILABLE
 # Column mappings for: ['fpts', 'fp', 'jj', 'ds', 'hw', 'pff', 'adp']
 # File mappings for: ['redraft', 'bestball']
@@ -102,13 +102,13 @@ from lib.config import COLUMN_MAPPINGS, FILE_MAPPINGS
 
 ### Test 3: Full Rankings Process Works
 ```bash
-python rankings.py --league-type redraft
+python app/rankings.py --league-type redraft
 # ✅ Success! Rankings saved to: df_rank_clean_20250823_2113_redraft.csv
 ```
 
 ### Test 4: Backward Compatibility
 ```python
-from lib.rankings_processor import process_fantasy_rankings_redraft
+from src.rankings_processor import process_fantasy_rankings_redraft
 # ✅ Old function names still work
 ```
 
@@ -135,8 +135,8 @@ from src import calculate_season_stats
 - Same behavior
 
 **For new code**:
-- Use simplified `lib/` imports
-- Use unified `rankings.py` CLI
+- Use simplified `src/` imports
+- Use unified `app/rankings.py` CLI
 - Take advantage of new league type flexibility
 
 ## 🎯 **Summary**

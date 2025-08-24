@@ -7,8 +7,12 @@ Replaces the original app/redraft_rankings_processor.py main function.
 """
 
 import sys
+import os
 import argparse
-from lib import RankingsProcessor
+
+# Add parent directory to path to import from src
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src import RankingsProcessor
 
 
 def main():

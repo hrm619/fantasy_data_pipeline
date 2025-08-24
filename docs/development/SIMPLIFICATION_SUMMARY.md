@@ -7,7 +7,7 @@ Successfully simplified the codebase and file structure while maintaining 100% f
 
 ### File Structure Reduction
 - **Before**: 20+ files across `app/`, `src/`, and `scripts/` directories
-- **After**: 6 focused files in unified `lib/` directory
+- **After**: 6 focused files in unified `src/` directory
 - **Reduction**: ~70% fewer files
 
 ### Code Deduplication
@@ -35,7 +35,7 @@ Successfully simplified the codebase and file structure while maintaining 100% f
 
 ### Unified Entry Point
 ```bash
-python rankings.py --league-type redraft  # Single command for all functionality
+python app/rankings.py --league-type redraft  # Single command for all functionality
 ```
 
 ### Modular Design
@@ -48,7 +48,7 @@ python rankings.py --league-type redraft  # Single command for all functionality
 ### Benefits Delivered
 
 1. **Simplified Structure** ✅
-   - Single `lib/` directory instead of multiple scattered directories
+   - Unified `src/` directory instead of multiple scattered directories
    - Clear module responsibilities
    - Logical organization
 
@@ -88,9 +88,9 @@ python rankings.py --league-type redraft  # Single command for all functionality
 
 ## 📋 **Migration Path**
 The old files are preserved, so migration can be gradual:
-- New code should use `lib/` modules
+- New code should use `src/` modules
 - Old code continues working with existing imports
-- `rankings.py` provides modern CLI interface
+- `app/rankings.py` provides modern CLI interface
 
 ## 🎉 **Summary**
 Successfully delivered a **dramatically simplified** codebase that is:
