@@ -208,6 +208,13 @@ WEEKLY_COLUMN_MAPPINGS = {
 }
 
 # ROS (Rest of Season) column mappings
+# Data sources:
+# - fp: https://www.fantasypros.com/nfl/rankings/ros-half-point-ppr-overall.php?signedin
+# - fpts: https://www.fantasypoints.com/nfl/rankings/rest-of-season/rb-wr-te?season=2025#/
+# - hw: https://underdognetwork.com/football/fantasy-rankings/week-6-fantasy-football-rankings-the-blueprint-2025
+# - jj: https://www.patreon.com/posts/141197927?collection=47664
+# - pff: https://www.pff.com/fantasy/rankings/draft
+# - ds: https://www.draftsharks.com/ros-rankings/half-ppr
 ROS_COLUMN_MAPPINGS = {
     # FPTS data (2025 NFL Rest of Season) - two files: QB and WR/RB/TE
     'fpts': [

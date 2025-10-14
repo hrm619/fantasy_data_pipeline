@@ -4,32 +4,37 @@ A comprehensive Python pipeline for processing fantasy football rankings data fr
 
 ## Features
 
-- **Multi-Source Data Processing**: Integrates rankings from FPTS, FantasyPros, JJ Zachariason, DraftShark, and Hayden Winks
+- **Multi-Source Data Processing**: Integrates rankings from FPTS, FantasyPros, JJ Zachariason, DraftShark, Hayden Winks, and PFF
+- **Multiple League Types**: Supports redraft, bestball, weekly, and rest-of-season (ROS) rankings
 - **Automated File Management**: Handles data flow between update, latest, and archive folders
 - **Advanced Analytics**: Calculates Value-Based Drafting (VBD) with position-specific baselines
 - **Player Key Matching**: Standardizes player names across different data sources
 - **Consolidated Rankings**: Creates unified ranking files with multiple ranking systems
+- **Contextual Data Integration**: Merges performance metrics (HPPR, FPTS, XFP) for weekly/ROS rankings
 - **Historical Data Preservation**: Archives processed files with timestamps
 - **Jupyter Notebook Analysis**: Includes notebooks for data exploration and analysis
 
 ## 📚 Documentation
 
-Complete documentation is available in the [`docs/`](docs/) directory:
+Complete documentation is available in the repository:
 
 - **[📖 API Reference](docs/api/source-library.md)** - Complete source library documentation
-- **[🛠 Development Docs](docs/development/)** - Architecture and consolidation details  
+- **[🛠 Development Docs](docs/development/)** - Architecture and consolidation details
+- **[🌐 Data Sources](DATA_SOURCES.md)** - Complete list of data source URLs and export instructions
+- **[💻 Claude Code Guide](CLAUDE.md)** - Development patterns and architecture for AI assistants
 - **[📝 Documentation Index](docs/README.md)** - Full documentation navigation
 
 ## Installation
 
-1. Install dependencies using uv (recommended):
+Install dependencies using uv (recommended):
 ```bash
-uv pip install -r requirements.txt
-```
+uv pip install -e .
 
-Or using pip:
-```bash
-pip install -r requirements.txt
+# With development tools
+uv pip install -e ".[dev]"
+
+# With notebook support
+uv pip install -e ".[notebooks]"
 ```
 
 ## Usage
@@ -42,7 +47,7 @@ The main functionality is the unified rankings processor that consolidates multi
 from src import RankingsProcessor
 
 # Process rankings with simplified API
-processor = RankingsProcessor('redraft')  # or 'bestball'
+processor = RankingsProcessor('redraft')  # or 'bestball', 'weekly', 'ros'
 output_file = processor.process_rankings()
 
 print(f"Rankings saved to: {output_file}")
@@ -52,13 +57,19 @@ print(f"Rankings saved to: {output_file}")
 
 ```bash
 # Process redraft rankings (default)
-python app/rankings.py
+uv run app/rankings.py
 
-# Process bestball rankings  
-python app/rankings.py --league-type bestball
+# Process bestball rankings
+uv run app/rankings.py --league-type bestball
 
-# With custom paths
-python app/rankings.py --data-path "custom/update/path" --quiet
+# Process weekly rankings (requires week number)
+uv run app/rankings.py --league-type weekly --week 7
+
+# Process rest-of-season rankings
+uv run app/rankings.py --league-type ros
+
+# With custom paths and quiet mode
+uv run app/rankings.py --data-path "custom/update/path" --quiet
 ```
 
 ### Data Workflow
@@ -74,20 +85,37 @@ The pipeline follows this automated workflow:
 ## Data Structure
 
 ### Input Sources
-- **FPTS**: Fantasy points projections with detailed stats
-- **FantasyPros**: Consensus expert rankings
-- **JJ Zachariason**: Late Round Podcast rankings
-- **DraftShark**: ADP data and rankings
-- **Hayden Winks**: Expert rankings and tiers
+
+The pipeline integrates data from six primary ranking sources:
+
+- **FPTS (Fantasy Points)**: Fantasy points projections with detailed stats
+- **FantasyPros**: Consensus expert rankings (ECR)
+- **JJ Zachariason**: Late Round Podcast rankings and tiers
+- **DraftShark**: Rankings with projections (floor, ceiling, consensus)
+- **Hayden Winks**: Expert rankings with HPPR projections
+- **PFF (Pro Football Focus)**: Rankings and projections
+
+For complete data source URLs, export instructions, and file naming conventions, see **[DATA_SOURCES.md](DATA_SOURCES.md)**.
 
 ### Output Format
 The consolidated rankings include:
+
+**All League Types:**
 - Player ID and standardized names
 - Position and team information
+- Multiple ranking systems (6 sources)
+- Position-specific ranks from each source
+- Averaged positional rankings
+
+**Redraft/Bestball Only:**
 - ADP data (round, pick, rank)
-- Multiple ranking systems
-- Position-specific ranks
 - VBD calculations (Value-Based Drafting)
+- Historical season stats (if available)
+
+**Weekly/ROS Only:**
+- HPPR, EXP, DIFF fields from Hayden Winks
+- Performance metrics: FPTS, XFP, TGT, TD, etc.
+- Game-level context data
 
 ### VBD Baselines
 - **QB**: Top 6 (1QB leagues)
