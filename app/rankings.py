@@ -18,22 +18,28 @@ from src import RankingsProcessor
 def main():
     """Main function with command-line argument support."""
     parser = argparse.ArgumentParser(description='Process fantasy football rankings')
-    parser.add_argument('--league-type', choices=['redraft', 'bestball'], default='redraft',
+    parser.add_argument('--league-type', choices=['redraft', 'bestball', 'weekly', 'ros'], default='redraft',
                        help='Type of league to process (default: redraft)')
+    parser.add_argument('--week', type=int, help='Week number for weekly rankings (required when league-type is weekly)')
     parser.add_argument('--data-path', help='Path to update directory containing ranking files')
     parser.add_argument('--player-key-path', help='Path to player key dictionary JSON file')
     parser.add_argument('--base-data-dir', help='Base directory containing latest, update, archive folders')
     parser.add_argument('--quiet', action='store_true', help='Suppress verbose output')
-    
+
     args = parser.parse_args()
+
+    # Validate week parameter for weekly league type
+    if args.league_type == 'weekly' and args.week is None:
+        parser.error("--week parameter is required when --league-type is 'weekly'")
     
     try:
-        processor = RankingsProcessor(args.league_type)
+        processor = RankingsProcessor(args.league_type, args.week)
         
         output_file = processor.process_rankings(
             data_path=args.data_path,
             player_key_path=args.player_key_path,
             base_data_dir=args.base_data_dir,
+            week=args.week,
             verbose=not args.quiet
         )
         

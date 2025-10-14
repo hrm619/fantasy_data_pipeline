@@ -8,7 +8,7 @@ import pandas as pd
 import os
 
 
-def load_data(filepath: str, header_row: int = None) -> pd.DataFrame:
+def load_data(filepath: str, header_row: int = None, sheet_name: str = None) -> pd.DataFrame:
     """
     Load a file into a pandas DataFrame based on its extension.
     Supports CSV and Excel (xlsx) files.
@@ -17,6 +17,8 @@ def load_data(filepath: str, header_row: int = None) -> pd.DataFrame:
         filepath (str): Path to the file.
         header_row (int, optional): Row index to use as column headers for CSV files.
                                    If None, auto-detects or uses default (0).
+        sheet_name (str, optional): Specific sheet name to load from Excel files.
+                                   If None, uses default logic (skip "Read Me" sheets).
 
     Returns:
         pd.DataFrame: Loaded data.
@@ -65,9 +67,18 @@ def load_data(filepath: str, header_row: int = None) -> pd.DataFrame:
                     return pd.read_csv(filepath, on_bad_lines='skip')
                     
     elif filepath.lower().endswith(('.xlsx', '.xls')):
-        # Handle Excel files - if first sheet is "Read Me", load second sheet
+        # Handle Excel files
         xl = pd.ExcelFile(filepath)
         sheet_names = xl.sheet_names
+
+        # If specific sheet name is provided, use it
+        if sheet_name is not None:
+            if sheet_name in sheet_names:
+                return pd.read_excel(filepath, sheet_name=sheet_name)
+            else:
+                raise ValueError(f"Sheet '{sheet_name}' not found in {filepath}. Available sheets: {sheet_names}")
+
+        # Otherwise, if first sheet is "Read Me", load second sheet
         if sheet_names and sheet_names[0].strip().lower() == "read me":
             if len(sheet_names) > 1:
                 return pd.read_excel(filepath, sheet_name=sheet_names[1])

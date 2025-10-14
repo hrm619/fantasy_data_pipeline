@@ -7,7 +7,7 @@ jj_processor, pff_processor, ds_processor, and adp_processor.
 
 import pandas as pd
 from typing import List, Dict, Any, Optional
-from .config import STANDARD_OUTPUT_COLUMNS
+from .config import STANDARD_OUTPUT_COLUMNS, WEEKLY_OUTPUT_COLUMNS, ROS_OUTPUT_COLUMNS
 
 
 class BaseProcessor:
@@ -20,61 +20,89 @@ class BaseProcessor:
     3. Return standardized output columns
     """
     
-    def __init__(self, source_name: str):
+    def __init__(self, source_name: str, league_type: str = 'redraft'):
         """
         Initialize processor for a specific data source.
-        
+
         Args:
             source_name (str): Name of the data source (e.g., 'fpts', 'fp', 'jj')
+            league_type (str): Type of league ('redraft', 'bestball', 'weekly', 'ros')
         """
         self.source_name = source_name
+        self.league_type = league_type
+        self.is_weekly = league_type == 'weekly'
+        self.is_ros = league_type == 'ros'
         
     def process(self, df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
         """
         Process ranking data and return standardized columns.
-        
+
         Args:
             df (pd.DataFrame): Raw ranking data
             verbose (bool): Whether to print progress information
-            
+
         Returns:
             pd.DataFrame: Processed data with standardized columns
         """
         if verbose:
             print(f"🔄 Processing {self.source_name} ranking data...")
-        
+
         df_processed = df.copy()
-        
+
+        # Step 0: Clean position data BEFORE calculating rankings (must happen first!)
+        df_processed = self._clean_position_data(df_processed, verbose)
+
         # Step 1: Handle ranking columns
         df_processed = self._ensure_ranking_columns(df_processed, verbose)
-        
+
         # Step 2: Calculate positional rankings
         df_processed = self._calculate_positional_rankings(df_processed, verbose)
-        
+
         # Step 3: Handle special cases for specific processors
         df_processed = self._handle_special_cases(df_processed, verbose)
-        
+
         # Step 4: Return standardized columns
         result_df = self._standardize_output(df_processed, verbose)
-        
+
         if verbose:
             self._print_summary(result_df)
-            
+
         return result_df
     
+    def _clean_position_data(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
+        """
+        Clean position data by removing numbers (e.g., "QB1" -> "QB").
+        Must run BEFORE calculating positional rankings.
+        """
+        if 'POS' not in df.columns:
+            return df
+
+        # For FantasyPros and ADP sources, clean position data
+        if self.source_name in ['fp', 'adp']:
+            original_values = df['POS'].unique()
+            df['POS'] = df['POS'].str.replace(r'\d+', '', regex=True)
+            if verbose and any(pd.notna(original_values)):
+                # Only show message if positions actually had numbers
+                if any(val for val in original_values if pd.notna(val) and any(c.isdigit() for c in str(val))):
+                    print(f"   ✓ Cleaned position data (removed position numbers)")
+
+        return df
+
     def _ensure_ranking_columns(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
         """Ensure required ranking columns exist."""
-        # Create overall ranking if not present
-        if 'RK' not in df.columns and 'ECR' not in df.columns:
-            df['RK'] = df.index + 1
-            if verbose:
-                print("   ✓ Created RK column using index values")
-        
+        # For weekly and ROS rankings, we skip overall RK creation and focus on positional rankings
+        if not self.is_weekly and not self.is_ros:
+            # Create overall ranking if not present
+            if 'RK' not in df.columns and 'ECR' not in df.columns:
+                df['RK'] = df.index + 1
+                if verbose:
+                    print("   ✓ Created RK column using index values")
+
         # Ensure ranking columns are integer type
         for col in ['RK', 'ECR']:
             if col in df.columns:
                 df[col] = df[col].astype('Int64')
-                
+
         return df
     
     def _calculate_positional_rankings(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
@@ -93,39 +121,49 @@ class BaseProcessor:
     
     def _handle_special_cases(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
         """Handle processor-specific logic."""
-        # FantasyPros: Clean position data (remove numbers like "WR1" -> "WR")
-        if self.source_name == 'fp' and 'POS' in df.columns:
-            df['POS'] = df['POS'].str.replace(r'\d+', '', regex=True)
-            
-        # ADP processor: Clean position data and calculate ADP ROUND from ADP
-        if self.source_name == 'adp':
-            if 'POS' in df.columns:
-                df['POS'] = df['POS'].str.replace(r'\d+', '', regex=True)
-            if 'ADP' in df.columns:
-                df['ADP ROUND'] = ((df['ADP'] - 1) // 12 + 1).astype('Int64')
-            
+        # Note: Position cleaning now happens in _clean_position_data() BEFORE calculating rankings
+
+        # ADP processor: Calculate ADP ROUND from ADP
+        if self.source_name == 'adp' and 'ADP' in df.columns:
+            df['ADP ROUND'] = ((df['ADP'] - 1) // 12 + 1).astype('Int64')
+
+        # HW processor: Use HPPR RANK as POS RANK for weekly and ROS rankings
+        if self.source_name == 'hw' and (self.is_weekly or self.is_ros):
+            if 'HPPR RANK' in df.columns and 'POS RANK' not in df.columns:
+                df['POS RANK'] = df['HPPR RANK'].astype('Int64')
+                if verbose:
+                    print("   ✓ Created POS RANK from HPPR RANK for HW data")
+
         return df
     
     def _standardize_output(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
         """Return standardized output columns."""
+        # Choose column structure based on league type
+        if self.is_weekly:
+            column_config = WEEKLY_OUTPUT_COLUMNS
+        elif self.is_ros:
+            column_config = ROS_OUTPUT_COLUMNS
+        else:
+            column_config = STANDARD_OUTPUT_COLUMNS
+        
         # Base required columns
-        base_columns = STANDARD_OUTPUT_COLUMNS['base'].copy()
+        base_columns = column_config['base'].copy()
         
         # Add ranking columns that exist
         ranking_columns = []
-        for col in STANDARD_OUTPUT_COLUMNS['ranking']:
+        for col in column_config['ranking']:
             if col in df.columns:
                 ranking_columns.append(col)
         
-        # Add ECR columns for FantasyPros
+        # Add ECR columns for FantasyPros (if not weekly or if weekly allows ECR)
         if self.source_name == 'fp':
             for col in ['ECR', 'POS ECR']:
-                if col in df.columns:
+                if col in df.columns and col in column_config['optional']:
                     ranking_columns.append(col)
         
         # Add optional columns that exist
         optional_columns = []
-        for col in STANDARD_OUTPUT_COLUMNS['optional']:
+        for col in column_config['optional']:
             if col in df.columns:
                 optional_columns.append(col)
         
@@ -157,37 +195,37 @@ class BaseProcessor:
 
 
 # Convenience functions for each processor type
-def process_fpts_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_fpts_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process FPTS ranking data."""
-    processor = BaseProcessor('fpts')
+    processor = BaseProcessor('fpts', league_type)
     return processor.process(df, verbose)
 
-def process_fantasypros_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_fantasypros_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process FantasyPros ranking data.""" 
-    processor = BaseProcessor('fp')
+    processor = BaseProcessor('fp', league_type)
     return processor.process(df, verbose)
 
-def process_hw_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_hw_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process Hayden Winks ranking data."""
-    processor = BaseProcessor('hw')
+    processor = BaseProcessor('hw', league_type)
     return processor.process(df, verbose)
 
-def process_jj_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_jj_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process JJ Zachariason ranking data."""
-    processor = BaseProcessor('jj')
+    processor = BaseProcessor('jj', league_type)
     return processor.process(df, verbose)
 
-def process_pff_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_pff_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process PFF ranking data."""
-    processor = BaseProcessor('pff')
+    processor = BaseProcessor('pff', league_type)
     return processor.process(df, verbose)
 
-def process_draftshark_rank_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_draftshark_rank_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process DraftShark ranking data."""
-    processor = BaseProcessor('ds')
+    processor = BaseProcessor('ds', league_type)
     return processor.process(df, verbose)
 
-def process_fantasypros_adp_data(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+def process_fantasypros_adp_data(df: pd.DataFrame, verbose: bool = True, league_type: str = 'redraft') -> pd.DataFrame:
     """Process FantasyPros ADP data."""
-    processor = BaseProcessor('adp')
+    processor = BaseProcessor('adp', league_type)
     return processor.process(df, verbose)

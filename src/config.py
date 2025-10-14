@@ -96,6 +96,233 @@ COLUMN_MAPPINGS = {
     ]
 }
 
+# Weekly-specific column mappings (different from draft mappings)
+WEEKLY_COLUMN_MAPPINGS = {
+    # FPTS data (The GURU) - weekly format
+    'fpts': [
+        'RK',
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'OPP',
+        'UP',
+        'DOWN',
+        'WW'
+    ],
+
+    # FantasyPros weekly data
+    'fp': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'OPP',
+        'MATCHUP'
+    ],
+
+    # JJ Zachariason weekly data (appears to be multi-po sition format)
+    'jj': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'OPP',
+        'TOTAL',
+        'MATCHUP',
+        'TIER',
+        'POS'
+    ],
+
+    # DraftShark weekly data
+    'ds': [
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'BYE',
+        'SOS',
+        'FLOOR',
+        'CONS',
+        'PROJ',
+        'CEIL',
+        '3D PROJ'
+    ],
+
+    # Hayden Winks weekly data
+    'hw': [
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'NOTES',
+        'HPPR',
+        'EXP',
+        'DIFF',
+        'HPPR RANK',
+        'EXP RANK'
+    ],
+
+    # PFF weekly data (header in second row)
+    'pff': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'POS RANK',
+        'BYE',
+        'STATUS'
+    ],
+
+    # HW data for merging (tableDownload.csv)
+    'hw-data': [
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'NOTES',
+        'HPPR',
+        'EXP',
+        'DIFF',
+        'HPPR RANK',
+        'EXP RANK'
+    ],
+
+    # FPTS data for merging (fpts-xfp-avg.csv)
+    'fpts-data': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'GP',
+        'FPTS',
+        'XFP',
+        'FPTS_DIFF',  # FPTS - XFP difference
+        'TD',
+        'XTD',
+        'TD_DIFF',  # TD - XTD difference
+        'OPP5',
+        'OPP10',
+        'OPP20',
+        'RUSH',
+        'AIRYDS',
+        'TGT',
+        'EZTGT',
+        'DEEPTGT'
+    ]
+}
+
+# ROS (Rest of Season) column mappings
+ROS_COLUMN_MAPPINGS = {
+    # FPTS data (2025 NFL Rest of Season) - two files: QB and WR/RB/TE
+    'fpts': [
+        'RK',
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'BYE'
+    ],
+
+    # JJ Zachariason ROS data (second sheet "Rankings and Tiers")
+    'jj': [
+        'RK',
+        'PLAYER NAME',
+        'POS',
+        'POS RANK',
+        'TIER',
+        'TEAM',
+        'ROS',
+        'NEXT 4',
+        'PPG',
+        'BYE'
+    ],
+
+    # Hayden Winks ROS data
+    'hw': [
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'NOTES',
+        'HPPR',
+        'EXP',
+        'DIFF',
+        'HPPR RANK',
+        'EXP RANK'
+    ],
+
+    # FantasyPros ROS data (FantasyPros_ format, header in first row)
+    'fp': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'SOS SEASON',
+        'SOS PLAYOFFS',
+        'ECR VS ADP'
+    ],
+
+    # PFF ROS data (Draft-rankings-export format)
+    'pff': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'POS RANK',
+        'BYE',
+        'ADP',
+        'PROJ',
+        'AUCTION'
+    ],
+
+    # DraftShark ROS data (ros-rankings-half-ppr format)
+    'ds': [
+        'RK',
+        'TEAM',
+        'PLAYER NAME',
+        'POS',
+        'G',
+        'SOS',
+        'BYE',
+        'INJURY RISK',
+        'FLOOR PROJ',
+        'CONS PROJ',
+        'DS PROJ',
+        'CEILING PROJ',
+        '3D VALUE'
+    ],
+
+    # HW data for merging (tableDownload.csv)
+    'hw-data': [
+        'PLAYER NAME',
+        'POS',
+        'TEAM',
+        'NOTES',
+        'HPPR',
+        'EXP',
+        'DIFF',
+        'HPPR RANK',
+        'EXP RANK'
+    ],
+
+    # FPTS data for merging (fpts-xfp-avg.csv)
+    'fpts-data': [
+        'RK',
+        'PLAYER NAME',
+        'TEAM',
+        'POS',
+        'GP',
+        'FPTS',
+        'XFP',
+        'FPTS_DIFF',  # FPTS - XFP difference
+        'TD',
+        'XTD',
+        'TD_DIFF',  # TD - XTD difference
+        'OPP5',
+        'OPP10',
+        'OPP20',
+        'RUSH',
+        'AIRYDS',
+        'TGT',
+        'EZTGT',
+        'DEEPTGT'
+    ]
+}
+
 # File lookup patterns for different league types
 FILE_MAPPINGS = {
     'redraft': {
@@ -115,6 +342,21 @@ FILE_MAPPINGS = {
         "hw": "tableDownload",
         "pff": "Draft-rankings-export",
         "adp": "adp-rankings"
+    },
+    'weekly': {
+        # Weekly mappings are generated dynamically by get_weekly_file_mappings()
+        # This placeholder ensures 'weekly' is recognized as a valid league type
+    },
+    'ros': {
+        "fpts": ["2025"],  # Multiple files: QB and WR/RB/TE
+        "jj": "ROSRankings_",
+        "hw": "tableDownload",
+        "fp": "FantasyPros_",
+        "pff": "Draft-rankings-export",
+        "ds": "ros-rankings-half-ppr",
+        # Data files for merging
+        "hw-data": "tableDownload",  # HW data for merging (HPPR, Exp, Diff)
+        "fpts-data": "fpts-xfp-avg"  # FPTS data for merging (numeric fields)
     }
 }
 
@@ -137,3 +379,41 @@ STANDARD_OUTPUT_COLUMNS = {
     'ranking': ['RK', 'POS RANK'],
     'optional': ['TIER', 'ADP', 'ECR', 'POS ECR', 'ADP ROUND']
 }
+
+# Weekly-specific output columns (excludes ADP and overall RK)
+WEEKLY_OUTPUT_COLUMNS = {
+    'base': ['PLAYER NAME', 'PLAYER ID', 'POS', 'TEAM'],
+    'ranking': ['POS RANK'],  # Only positional rankings for weekly
+    'optional': ['TIER', 'ECR', 'POS ECR']  # No ADP-related columns for weekly
+}
+
+# ROS-specific output columns (similar to weekly, focus on positional rankings)
+ROS_OUTPUT_COLUMNS = {
+    'base': ['PLAYER NAME', 'PLAYER ID', 'POS', 'TEAM'],
+    'ranking': ['POS RANK'],  # Only positional rankings for ROS
+    'optional': ['TIER', 'ECR', 'POS ECR']  # No ADP-related columns for ROS
+}
+
+
+def get_weekly_file_mappings(week: int) -> dict:
+    """
+    Generate weekly file mappings with the specified week number.
+
+    Args:
+        week (int): Week number to use in file mappings
+
+    Returns:
+        dict: File mappings with week number dynamically generated
+    """
+    return {
+        "fpts": ["The GURU"],  # List of file prefixes for multiple position files
+        "fp": "FantasyPros_",  # Will be combined with week info
+        "jj": f"Week{week}_RankingsTiers",  # Week2_RankingsTiers, Week3_RankingsTiers, etc.
+        "ds": "weekly-rankings",  # Static file prefix - update if needed
+        "hw": "tableDownload",  # Static file prefix - update if needed
+        "pff": f"Week-{week}-rankings",  # Week-2-rankings, Week-3-rankings, etc.
+        # Note: No ADP mapping for weekly - ADP not relevant for weekly rankings
+        # Data files for merging
+        "hw-data": "tableDownload",  # HW data for merging (HPPR, Exp, Diff)
+        "fpts-data": "fpts-xfp-avg"  # FPTS data for merging (numeric fields)
+    }
