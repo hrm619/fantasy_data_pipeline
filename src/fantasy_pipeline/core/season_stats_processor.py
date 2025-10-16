@@ -9,7 +9,7 @@ fantasy point breakdowns and percentages.
 import pandas as pd
 import numpy as np
 from typing import Dict, Optional, Tuple
-from .utils import validate_dataframe, safe_numeric_conversion, print_processing_summary
+from ..utils import validate_dataframe, safe_numeric_conversion, print_processing_summary
 
 
 def calculate_season_stats(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:

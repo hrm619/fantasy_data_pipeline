@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Python pipeline for processing fantasy football rankings from multiple sources (FPTS, FantasyPros, JJ Zachariason, DraftShark, Hayden Winks, PFF), calculating advanced metrics like Value-Based Drafting (VBD), and consolidating rankings into unified output files.
 
-**Key Feature**: For weekly and ROS rankings, the pipeline includes an **integrated web scraper** (`src/hw_scraper/`) that automatically fetches Hayden Winks rankings from Underdog Network, eliminating the need for manual file downloads.
+**Key Feature**: For weekly and ROS rankings, the pipeline includes an **integrated web scraper** (`src/fantasy_pipeline/scraper/`) that automatically fetches Hayden Winks rankings from Underdog Network, eliminating the need for manual file downloads.
+
+**Package Name**: `fantasy-pipeline` (v0.3.0) - installed as `fantasy_pipeline` Python package
 
 ## Development Commands
 
@@ -28,19 +30,22 @@ uv pip install -e ".[notebooks]"
 ### Running the Pipeline
 ```bash
 # Process redraft rankings (default)
-uv run app/rankings.py
+uv run ff-rankings
 
 # Process bestball rankings
-uv run app/rankings.py --league-type bestball
+uv run ff-rankings --league-type bestball
 
 # Process weekly rankings (requires week number)
-uv run app/rankings.py --league-type weekly --week 2
+uv run ff-rankings --league-type weekly --week 2
 
 # Process rest-of-season (ROS) rankings
-uv run app/rankings.py --league-type ros
+uv run ff-rankings --league-type ros
 
 # Custom paths and quiet mode
-uv run app/rankings.py --data-path "custom/path" --quiet
+uv run ff-rankings --data-path "custom/path" --quiet
+
+# Generate historical stats
+uv run ff-stats --season 2024 --min-games 10
 ```
 
 ### Testing & Quality
@@ -231,32 +236,66 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 
 ```
 src/
-├── __init__.py               # Public API exports
-├── config.py                 # All configuration and mappings
-├── base_processor.py         # Unified processing logic
-├── rankings_processor.py     # Main orchestrator class
-├── data_loader.py           # File loading utilities
-├── player_utils.py          # Player name standardization
-├── hw_scraper_integration.py # HW scraper integration (auto-scraping)
-├── hw_scraper/              # Web scraper module for HW rankings
-│   ├── __init__.py          # Module exports
-│   └── scraper.py           # Web scraping logic and player matching
-├── season_stats_processor.py # Historical season stats
-├── weekly_stats_processor.py # Historical weekly trends
-└── update_player_key.py     # Player key management tools
+└── fantasy_pipeline/         # Main Python package
+    ├── __init__.py          # Public API exports
+    ├── config.py            # All configuration and mappings
+    ├── utils.py             # Shared utilities
+    ├── core/                # Core processing logic
+    │   ├── __init__.py
+    │   ├── base_processor.py         # Unified processing logic
+    │   ├── rankings_processor.py     # Main orchestrator class
+    │   ├── season_stats_processor.py # Historical season stats
+    │   ├── weekly_stats_processor.py # Historical weekly trends
+    │   └── stats_aggregator.py       # Player stats aggregation
+    ├── data/                # Data utilities
+    │   ├── __init__.py
+    │   ├── loader.py        # File loading utilities
+    │   └── player_utils.py  # Player name standardization
+    ├── scraper/             # Web scraper module
+    │   ├── __init__.py
+    │   ├── hw_scraper.py    # Web scraping logic and player matching
+    │   └── integration.py   # HW scraper integration (auto-scraping)
+    └── cli/                 # Command-line interface
+        ├── __init__.py
+        ├── main.py          # Main CLI entry point
+        ├── rankings.py      # Rankings command
+        └── stats.py         # Stats generation command
 
-app/
-├── rankings.py              # CLI entry point
-└── player_stats.py          # Historical stats generator
+scripts/
+└── update_player_key.py     # Player key maintenance tools
 
 docs/
 ├── api/source-library.md    # Complete API reference
 └── development/             # Architecture documentation
 ```
 
+## Python Package Usage
+
+### Importing the Package
+
+```python
+# Main API - recommended imports
+from fantasy_pipeline import (
+    RankingsProcessor,
+    process_redraft_rankings,
+    process_weekly_rankings,
+    load_player_key_mapping,
+    add_player_ids,
+)
+
+# Direct module imports
+from fantasy_pipeline.core import BaseProcessor
+from fantasy_pipeline.data import load_data
+from fantasy_pipeline.scraper import auto_scrape_if_needed
+
+# Example usage
+processor = RankingsProcessor('redraft')
+output_file = processor.process_rankings(verbose=True)
+```
+
 ## HW Scraper Integration
 
-The `src/hw_scraper/` module is a web scraper that automatically fetches Hayden Winks rankings for weekly and ROS pipelines.
+The `src/fantasy_pipeline/scraper/` module is a web scraper that automatically fetches Hayden Winks rankings for weekly and ROS pipelines.
 
 ### How It Works
 
@@ -272,21 +311,21 @@ The `src/hw_scraper/` module is a web scraper that automatically fetches Hayden 
 
 ### Key Files
 
-- **`src/hw_scraper_integration.py`**: Bridge between scraper and main pipeline
+- **`src/fantasy_pipeline/scraper/integration.py`**: Bridge between scraper and main pipeline
   - `auto_scrape_if_needed()`: Main entry point, checks if scraping needed
   - `run_hw_scraper()`: Executes scraper and saves output
   - `check_hw_scraper_output_exists()`: Checks if scraped file already exists
-- **`src/config.py`**:
+- **`src/fantasy_pipeline/config.py`**:
   - `get_hw_scraper_url()`: Generates Underdog Network URL from week number
   - `ROS_COLUMN_MAPPINGS['hw']`: Maps scraper output columns to pipeline format
-- **`src/hw_scraper/scraper.py`**: Core scraping logic with player matching
+- **`src/fantasy_pipeline/scraper/hw_scraper.py`**: Core scraping logic with player matching
 
 ### Manual Scraper Usage
 
 You can also use the scraper standalone:
 
 ```python
-from src.hw_scraper import scrape_fantasy_rankings
+from fantasy_pipeline.scraper import scrape_fantasy_rankings
 
 # Scrape specific week
 url = "https://underdognetwork.com/football/fantasy-rankings/week-7-fantasy-football-rankings-the-blueprint-2025"
@@ -298,6 +337,7 @@ df.to_csv("hw-week7.csv", index=False)
 
 - **Scraper Output**: Includes `Player Name`, `Player ID`, `Standardized Name`, `Position`, `Position Rank`, `Yards Stat`, `Details`
 - **Player IDs**: Pre-matched using scraper's own player_key_dict.json (shared with main pipeline)
+- **Player Key Path**: The scraper loads `player_key_dict.json` from project root using relative path navigation (3 levels up from `src/fantasy_pipeline/scraper/hw_scraper.py`)
 - **No TEAM Column**: HW scraper doesn't extract team info; TEAM is filled from other sources during merge
 - **POS RANK Preservation**: BaseProcessor skips recalculating POS RANK if already present from scraper
 

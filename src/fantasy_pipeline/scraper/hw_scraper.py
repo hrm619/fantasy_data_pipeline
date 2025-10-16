@@ -22,8 +22,10 @@ def load_player_key():
         dict: Player key dictionary mapping player IDs to name variations
     """
     # Get the path relative to this file - go up to project root
+    # Current: src/fantasy_pipeline/scraper/hw_scraper.py
+    # Need to go up 3 levels: scraper/ -> fantasy_pipeline/ -> src/ -> project_root/
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(current_dir))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
     key_path = os.path.join(project_root, 'player_key_dict.json')
 
     with open(key_path, 'r') as f:

@@ -12,14 +12,8 @@ import os
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 
-# Add src directory to path for imports
-import sys
-src_path = os.path.join(os.path.dirname(__file__), '..', 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-
-from src.season_stats_processor import calculate_season_stats, get_season_stats_summary, validate_season_stats
-from src.weekly_stats_processor import calculate_weekly_trends, get_weekly_trends_summary, validate_weekly_trends, compare_half_season_performance
+from .season_stats_processor import calculate_season_stats
+from .weekly_stats_processor import calculate_weekly_trends
 
 
 def aggregate_player_historical_stats(

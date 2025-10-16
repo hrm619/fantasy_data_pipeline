@@ -7,7 +7,7 @@ jj_processor, pff_processor, ds_processor, and adp_processor.
 
 import pandas as pd
 from typing import List, Dict, Any, Optional
-from .config import STANDARD_OUTPUT_COLUMNS, WEEKLY_OUTPUT_COLUMNS, ROS_OUTPUT_COLUMNS
+from ..config import STANDARD_OUTPUT_COLUMNS, WEEKLY_OUTPUT_COLUMNS, ROS_OUTPUT_COLUMNS
 
 
 class BaseProcessor:

@@ -15,17 +15,17 @@ import shutil
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from .config import (
+from ..config import (
     COLUMN_MAPPINGS, WEEKLY_COLUMN_MAPPINGS, ROS_COLUMN_MAPPINGS,
     FILE_MAPPINGS, SUPPORTED_POSITIONS, DEFAULT_PATHS, get_weekly_file_mappings
 )
-from .data_loader import load_data
-from .player_utils import clean_player_names, load_player_key_mapping, add_player_ids
+from ..data.loader import load_data
+from ..data.player_utils import clean_player_names, load_player_key_mapping, add_player_ids
 from .base_processor import (
     process_fpts_data, process_fantasypros_data, process_draftshark_rank_data,
     process_hw_data, process_jj_data, process_pff_data, process_fantasypros_adp_data
 )
-from .hw_scraper_integration import auto_scrape_if_needed
+from ..scraper.integration import auto_scrape_if_needed
 
 
 class RankingsProcessor:

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from .hw_scraper import scrape_fantasy_rankings
-from .config import get_hw_scraper_url, DEFAULT_PATHS
+from ..config import get_hw_scraper_url, DEFAULT_PATHS
 
 
 def run_hw_scraper(week: int = None, league_type: str = 'weekly',

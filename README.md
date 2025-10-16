@@ -45,7 +45,7 @@ uv pip install -e ".[notebooks]"
 The main functionality is the unified rankings processor that consolidates multiple ranking sources:
 
 ```python
-from src import RankingsProcessor
+from fantasy_pipeline import RankingsProcessor
 
 # Process rankings with simplified API
 processor = RankingsProcessor('redraft')  # or 'bestball', 'weekly', 'ros'
@@ -58,19 +58,22 @@ print(f"Rankings saved to: {output_file}")
 
 ```bash
 # Process redraft rankings (default)
-uv run app/rankings.py
+uv run ff-rankings
 
 # Process bestball rankings
-uv run app/rankings.py --league-type bestball
+uv run ff-rankings --league-type bestball
 
 # Process weekly rankings (requires week number)
-uv run app/rankings.py --league-type weekly --week 7
+uv run ff-rankings --league-type weekly --week 7
 
 # Process rest-of-season rankings
-uv run app/rankings.py --league-type ros
+uv run ff-rankings --league-type ros
 
 # With custom paths and quiet mode
-uv run app/rankings.py --data-path "custom/update/path" --quiet
+uv run ff-rankings --data-path "custom/update/path" --quiet
+
+# Generate historical stats for rankings
+uv run ff-stats --season 2024 --min-games 10
 ```
 
 ### Data Workflow
@@ -109,7 +112,7 @@ For **weekly** and **ROS** rankings, the pipeline includes a built-in web scrape
 - **Player Matching**: Uses fuzzy matching to standardize player names to IDs
 - **No Manual Downloads**: Eliminates need to manually download HW rankings from Underdog Network
 
-The scraper is located in `src/hw_scraper/` module.
+The scraper is located in `src/fantasy_pipeline/scraper/` module.
 
 ### Output Format
 The consolidated rankings include:
@@ -141,24 +144,34 @@ The consolidated rankings include:
 
 ```
 fantasy_data_pipeline/
+├── src/
+│   └── fantasy_pipeline/         # Main Python package
+│       ├── core/                 # Core processing logic
+│       │   ├── rankings_processor.py
+│       │   ├── base_processor.py
+│       │   ├── season_stats_processor.py
+│       │   ├── weekly_stats_processor.py
+│       │   └── stats_aggregator.py
+│       ├── data/                 # Data utilities
+│       │   ├── loader.py
+│       │   └── player_utils.py
+│       ├── scraper/              # Web scraping
+│       │   ├── hw_scraper.py
+│       │   └── integration.py
+│       ├── cli/                  # Command-line interface
+│       │   ├── main.py
+│       │   ├── rankings.py
+│       │   └── stats.py
+│       ├── config.py             # Configuration
+│       └── utils.py              # Utilities
 ├── data/
 │   └── rankings current/
-│       ├── update/          # New ranking files to process
-│       ├── latest/          # Most recent processed rankings
-│       ├── agg archive/     # Historical output files
-│       └── raw archive/     # Historical input files
-├── src/
-│   ├── rankings_processor.py     # Main processing pipeline
-│   ├── hw_scraper_integration.py # HW scraper integration
-│   ├── hw_scraper/              # Web scraper module
-│   │   ├── __init__.py          # Module exports
-│   │   └── scraper.py           # Web scraping and player matching
-│   ├── base_processor.py         # Unified data processing
-│   ├── data_loader.py           # File loading utilities
-│   └── player_utils.py          # Player name standardization
-├── app/
-│   ├── rankings.py              # CLI entry point
-│   └── player_stats.py          # Historical stats
+│       ├── update/               # New ranking files to process
+│       ├── latest/               # Most recent processed rankings
+│       ├── agg archive/          # Historical output files
+│       └── raw archive/          # Historical input files
+├── scripts/
+│   └── update_player_key.py     # Player key maintenance
 ├── notebooks/
 │   ├── ff-data.ipynb            # Data analysis
 │   ├── ff-player-key.ipynb      # Player key exploration
@@ -168,33 +181,33 @@ fantasy_data_pipeline/
 
 ## Key Components
 
-### Rankings Processor (`src/rankings_processor.py`)
+### Rankings Processor (`src/fantasy_pipeline/core/rankings_processor.py`)
 - Loads and standardizes data from multiple sources
 - Orchestrates auto-scraping for weekly/ROS rankings
 - Calculates VBD metrics with position-specific baselines
 - Creates consolidated rankings with multiple scoring systems
 - Manages automated file archiving workflow
 
-### HW Scraper Integration (`src/hw_scraper_integration.py`)
-- Bridges hw_ranking_scraper with main pipeline
+### HW Scraper Integration (`src/fantasy_pipeline/scraper/integration.py`)
+- Integrates web scraper with main pipeline
 - Auto-triggers scraping when HW files don't exist
 - Handles URL generation for Underdog Network
 - Provides graceful fallback on scraping failures
 
-### Base Processor (`src/base_processor.py`)
+### Base Processor (`src/fantasy_pipeline/core/base_processor.py`)
 - Unified processing logic for all data sources
 - Handles ranking calculations and standardization
 - Preserves pre-existing POS RANK from scraper output
 
-### Data Loading (`src/data_loader.py`)
+### Data Loading (`src/fantasy_pipeline/data/loader.py`)
 - Handles various file formats (CSV, Excel)
 - Auto-detects CSV headers (fixed bug with row misidentification)
 - Provides consistent data loading interface
 
 ### Player Key Management
 - `player_key_dict.json`: Master dictionary for player name standardization
-- `src/player_utils.py`: Functions for player name cleaning and ID matching
-- `src/update_player_key.py`: Tools for maintaining player mappings
+- `src/fantasy_pipeline/data/player_utils.py`: Functions for player name cleaning and ID matching
+- `scripts/update_player_key.py`: Tools for maintaining player mappings
 
 ## Advanced Features
 
@@ -233,11 +246,40 @@ fantasy_data_pipeline/
 - VBD calculations can be adjusted by modifying baseline values in the code
 - Processing typically takes 30-60 seconds depending on file sizes (plus scraping time if needed)
 
+## Testing
+
+Test the pipeline with real data:
+
+```bash
+# Test weekly rankings (Week 2)
+uv run ff-rankings --league-type weekly --week 2
+
+# Test ROS rankings
+uv run ff-rankings --league-type ros
+
+# Test redraft rankings
+uv run ff-rankings --league-type redraft
+```
+
+Expected output:
+- Consolidated rankings file in `data/rankings current/latest/`
+- Archived source files in `raw archive/`
+- Multiple ranking sources integrated
+- Auto-scraped HW rankings (for weekly/ROS)
+
 ## Example Output
 
-The processor generates consolidated rankings like:
+### Redraft Rankings
 ```
-PLAYER NAME    | POS | ADP ROUND | fpts_RK | fantasypros_RK | VBD
-Christian McCaffrey | RB  | 1        | 2       | 1              | 67.2
-Ja'Marr Chase      | WR  | 1        | 5       | 3              | 52.1
+PLAYER NAME         | POS | ADP ROUND | fpts_RK | fantasypros_RK | VBD
+Christian McCaffrey | RB  | 1         | 2       | 1              | 67.2
+Ja'Marr Chase       | WR  | 1         | 5       | 3              | 52.1
+```
+
+### Weekly Rankings
+```
+PLAYER NAME    | POS | avg_POS RANK | fpts_POS RANK | fp_POS RANK | HPPR
+Trey McBride   | TE  | 1.0          | 1             | 1           | 9.1
+Lamar Jackson  | QB  | 1.5          | 3             | 1           | -
+Ja'Marr Chase  | WR  | 1.5          | 3             | 1           | 3.6
 ``` 

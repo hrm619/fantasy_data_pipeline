@@ -1,7 +1,11 @@
 
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "fantasy-data-pipeline"
-version = "0.2.0"
+name = "fantasy-pipeline"
+version = "0.3.0"
 description = "A comprehensive Python pipeline for processing fantasy football rankings data from multiple sources with automated web scraping"
 readme = "README.md"
 authors = [
@@ -19,6 +23,13 @@ dependencies = [
     "seaborn>=0.12.0",
     "ipykernel>=6.27.1",
 ]
+
+[project.scripts]
+ff-rankings = "fantasy_pipeline.cli.rankings:main"
+ff-stats = "fantasy_pipeline.cli.stats:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.optional-dependencies]
 dev = [
