@@ -146,17 +146,15 @@ WEEKLY_COLUMN_MAPPINGS = {
         '3D PROJ'
     ],
 
-    # Hayden Winks weekly data
+    # Hayden Winks weekly data (scraped from Underdog Network)
     'hw': [
         'PLAYER NAME',
+        'PLAYER ID',
+        'STANDARDIZED NAME',
         'POS',
-        'TEAM',
-        'NOTES',
-        'HPPR',
-        'EXP',
-        'DIFF',
-        'HPPR RANK',
-        'EXP RANK'
+        'POS RANK',
+        'YARDS STAT',
+        'DETAILS'
     ],
 
     # PFF weekly data (header in second row)
@@ -239,17 +237,15 @@ ROS_COLUMN_MAPPINGS = {
         'BYE'
     ],
 
-    # Hayden Winks ROS data
+    # Hayden Winks ROS data (scraped from Underdog Network)
     'hw': [
         'PLAYER NAME',
+        'PLAYER ID',
+        'STANDARDIZED NAME',
         'POS',
-        'TEAM',
-        'NOTES',
-        'HPPR',
-        'EXP',
-        'DIFF',
-        'HPPR RANK',
-        'EXP RANK'
+        'POS RANK',
+        'YARDS STAT',
+        'DETAILS'
     ],
 
     # FantasyPros ROS data (FantasyPros_ format, header in first row)
@@ -357,7 +353,7 @@ FILE_MAPPINGS = {
     'ros': {
         "fpts": ["2025"],  # Multiple files: QB and WR/RB/TE
         "jj": "ROSRankings_",
-        "hw": "tableDownload",
+        "hw": "hw-ros",  # Scraped HW rankings from Underdog Network
         "fp": "FantasyPros_",
         "pff": "Draft-rankings-export",
         "ds": "ros-rankings-half-ppr",
@@ -417,10 +413,31 @@ def get_weekly_file_mappings(week: int) -> dict:
         "fp": "FantasyPros_",  # Will be combined with week info
         "jj": f"Week{week}_RankingsTiers",  # Week2_RankingsTiers, Week3_RankingsTiers, etc.
         "ds": "weekly-rankings",  # Static file prefix - update if needed
-        "hw": "tableDownload",  # Static file prefix - update if needed
+        "hw": f"hw-week{week}",  # Scraped HW rankings from Underdog Network
         "pff": f"Week-{week}-rankings",  # Week-2-rankings, Week-3-rankings, etc.
         # Note: No ADP mapping for weekly - ADP not relevant for weekly rankings
         # Data files for merging
         "hw-data": "tableDownload",  # HW data for merging (HPPR, Exp, Diff)
         "fpts-data": "fpts-xfp-avg"  # FPTS data for merging (numeric fields)
     }
+
+
+def get_hw_scraper_url(week: int = None, league_type: str = 'weekly') -> str:
+    """
+    Generate the Underdog Network URL for HW rankings scraper.
+
+    Args:
+        week (int): Week number for weekly rankings
+        league_type (str): League type ('weekly' or 'ros')
+
+    Returns:
+        str: URL for the HW rankings article
+    """
+    if league_type == 'weekly' and week:
+        return f"https://underdognetwork.com/football/fantasy-rankings/week-{week}-fantasy-football-rankings-the-blueprint-2025"
+    elif league_type == 'ros':
+        # For ROS, we can use the latest weekly rankings URL as a reasonable default
+        # User can override this if needed
+        return "https://underdognetwork.com/football/fantasy-rankings/week-6-fantasy-football-rankings-the-blueprint-2025"
+    else:
+        raise ValueError(f"Invalid parameters for HW scraper URL: league_type={league_type}, week={week}")

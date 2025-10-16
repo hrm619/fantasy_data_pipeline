@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Python pipeline for processing fantasy football rankings from multiple sources (FPTS, FantasyPros, JJ Zachariason, DraftShark, Hayden Winks, PFF), calculating advanced metrics like Value-Based Drafting (VBD), and consolidating rankings into unified output files.
 
+**Key Feature**: For weekly and ROS rankings, the pipeline includes an **integrated web scraper** (`src/hw_scraper/`) that automatically fetches Hayden Winks rankings from Underdog Network, eliminating the need for manual file downloads.
+
 ## Development Commands
 
 ### Package Management
@@ -187,6 +189,7 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 - Sorted by `avg_POS RANK` instead of ADP
 - File mapping uses `get_weekly_file_mappings(week)` for dynamic week numbers
 - Merges hw-data and fpts-data for contextual performance metrics
+- **Auto-scrapes HW rankings** from Underdog Network if not present in update folder
 
 ### ROS Rankings Specifics
 - Similar to weekly: no ADP, no overall RK, positional focus only
@@ -195,19 +198,20 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 - FantasyPros ROS files use first row as header (unlike weekly which uses second row)
 - JJ files require loading Excel sheet "Rankings and Tiers"
 - Merges hw-data and fpts-data like weekly rankings
+- **Auto-scrapes HW rankings** from Underdog Network if not present in update folder
 
 ### Data Source URLs
 
 **ROS Rankings:**
 - **fp (FantasyPros)**: https://www.fantasypros.com/nfl/rankings/ros-half-point-ppr-overall.php?signedin
 - **fpts (Fantasy Points)**: https://www.fantasypoints.com/nfl/rankings/rest-of-season/rb-wr-te?season=2025#/
-- **hw (Hayden Winks)**: https://underdognetwork.com/football/fantasy-rankings/week-6-fantasy-football-rankings-the-blueprint-2025
+- **hw (Hayden Winks)**: Auto-scraped from https://underdognetwork.com/football/fantasy-rankings (URL varies by week)
 - **jj (JJ Zachariason)**: https://www.patreon.com/posts/141197927?collection=47664
 - **pff (PFF)**: https://www.pff.com/fantasy/rankings/draft
 - **ds (DraftShark)**: https://www.draftsharks.com/ros-rankings/half-ppr
 
 **Data Files for ROS/Weekly:**
-- **hw-data**: Same as hw source (tableDownload.csv export)
+- **hw-data**: Manual download from Underdog Network (tableDownload.csv export) - provides HPPR, EXP, DIFF fields
 - **fpts-data**: Performance metrics from Fantasy Points (fpts-xfp-avg.csv)
 
 ### Column Naming Conventions
@@ -233,6 +237,10 @@ src/
 ├── rankings_processor.py     # Main orchestrator class
 ├── data_loader.py           # File loading utilities
 ├── player_utils.py          # Player name standardization
+├── hw_scraper_integration.py # HW scraper integration (auto-scraping)
+├── hw_scraper/              # Web scraper module for HW rankings
+│   ├── __init__.py          # Module exports
+│   └── scraper.py           # Web scraping logic and player matching
 ├── season_stats_processor.py # Historical season stats
 ├── weekly_stats_processor.py # Historical weekly trends
 └── update_player_key.py     # Player key management tools
@@ -246,6 +254,53 @@ docs/
 └── development/             # Architecture documentation
 ```
 
+## HW Scraper Integration
+
+The `src/hw_scraper/` module is a web scraper that automatically fetches Hayden Winks rankings for weekly and ROS pipelines.
+
+### How It Works
+
+1. **Automatic Triggering**: When running weekly or ROS rankings, the pipeline checks if `hw-week{N}.csv` or `hw-ros.csv` exists in the update folder
+2. **Smart Scraping**: If the file doesn't exist, the scraper automatically:
+   - Constructs the URL based on week number (e.g., `week-7-fantasy-football-rankings-the-blueprint-2025`)
+   - Fetches the article from Underdog Network
+   - Parses HTML tables using BeautifulSoup
+   - Matches player names to standardized IDs using fuzzy matching
+   - Saves output to `data/rankings current/update/hw-week{N}.csv` or `hw-ros.csv`
+3. **Skip on Exists**: If the file already exists, scraping is skipped (prevents redundant network calls)
+4. **Graceful Failure**: If scraping fails, the pipeline continues with existing files
+
+### Key Files
+
+- **`src/hw_scraper_integration.py`**: Bridge between scraper and main pipeline
+  - `auto_scrape_if_needed()`: Main entry point, checks if scraping needed
+  - `run_hw_scraper()`: Executes scraper and saves output
+  - `check_hw_scraper_output_exists()`: Checks if scraped file already exists
+- **`src/config.py`**:
+  - `get_hw_scraper_url()`: Generates Underdog Network URL from week number
+  - `ROS_COLUMN_MAPPINGS['hw']`: Maps scraper output columns to pipeline format
+- **`src/hw_scraper/scraper.py`**: Core scraping logic with player matching
+
+### Manual Scraper Usage
+
+You can also use the scraper standalone:
+
+```python
+from src.hw_scraper import scrape_fantasy_rankings
+
+# Scrape specific week
+url = "https://underdognetwork.com/football/fantasy-rankings/week-7-fantasy-football-rankings-the-blueprint-2025"
+df = scrape_fantasy_rankings(url)
+df.to_csv("hw-week7.csv", index=False)
+```
+
+### Important Notes
+
+- **Scraper Output**: Includes `Player Name`, `Player ID`, `Standardized Name`, `Position`, `Position Rank`, `Yards Stat`, `Details`
+- **Player IDs**: Pre-matched using scraper's own player_key_dict.json (shared with main pipeline)
+- **No TEAM Column**: HW scraper doesn't extract team info; TEAM is filled from other sources during merge
+- **POS RANK Preservation**: BaseProcessor skips recalculating POS RANK if already present from scraper
+
 ## Troubleshooting
 
 **File Not Found Errors**: Check that file prefixes in `FILE_MAPPINGS` match actual filenames in `data/rankings current/update/`
@@ -255,3 +310,14 @@ docs/
 **Missing Player IDs**: Update `player_key_dict.json` with new player name variations using `src/update_player_key.py`
 
 **Weekly Rankings Issues**: Ensure `--week` parameter is provided and file mappings in `get_weekly_file_mappings()` are correct
+
+**HW Scraper Failures**:
+- Check URL pattern in `get_hw_scraper_url()` matches current Underdog Network article naming
+- Verify HTML structure hasn't changed (scraper uses BeautifulSoup to parse tables)
+- Use `force=True` in `auto_scrape_if_needed()` to re-scrape even if file exists
+- Check network connectivity and Underdog Network availability
+
+**Missing HW Rankings Data**:
+- Verify scraped file was created in update folder (check for `hw-week{N}.csv` or `hw-ros.csv`)
+- Check data_loader.py CSV header detection (fixed bug where certain rows were misidentified as headers)
+- Ensure BaseProcessor doesn't recalculate POS RANK when already present

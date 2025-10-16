@@ -25,6 +25,7 @@ from .base_processor import (
     process_fpts_data, process_fantasypros_data, process_draftshark_rank_data,
     process_hw_data, process_jj_data, process_pff_data, process_fantasypros_adp_data
 )
+from .hw_scraper_integration import auto_scrape_if_needed
 
 
 class RankingsProcessor:
@@ -117,7 +118,22 @@ class RankingsProcessor:
         
         # Step 0.1: Archive existing files
         self._archive_existing_files(dirs['latest'], dirs['agg_archive'], verbose)
-        
+
+        # Step 0.2: Auto-scrape HW rankings for weekly/ROS if needed
+        if self.league_type in ['weekly', 'ros']:
+            try:
+                auto_scrape_if_needed(
+                    week=self.week,
+                    league_type=self.league_type,
+                    data_path=data_path,
+                    force=False,
+                    verbose=verbose
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"   ⚠️  HW scraping failed: {e}")
+                    print(f"   Continuing with existing files (if any)...")
+
         # Step 1: Load input files
         files = self._load_input_files(data_path, verbose)
         
@@ -321,24 +337,30 @@ class RankingsProcessor:
             dataframes[key] = clean_player_names(df)
             if verbose and 'PLAYER NAME' in df.columns:
                 print(f"   ✓ Cleaned player names in {key}")
-        
+
         return dataframes
     
     def _add_player_ids(self, dataframes: Dict[str, pd.DataFrame], player_key_path: str, verbose: bool) -> tuple:
         """Add player IDs using player key dictionary."""
         if verbose:
             print("\n🔑 Step 4: Adding player IDs using player key dictionary...")
-        
+
         player_key_dict, player_name_to_key = load_player_key_mapping(player_key_path)
-        
+
         if verbose:
             print(f"   ✓ Player name to key mapping saved to: data/player_name_to_key.json")
             print(f"   ✓ Total mappings created: {len(player_name_to_key)}")
-        
+
         # Add PLAYER ID column to each dataframe
         for key, df in dataframes.items():
+            # Skip adding player IDs if already present (e.g., from HW scraper output)
+            if 'PLAYER ID' in df.columns:
+                if verbose:
+                    print(f"   ℹ️  {key}: PLAYER ID already present, skipping ID assignment")
+                continue
+
             dataframes[key] = add_player_ids(df, player_name_to_key, verbose=verbose)
-        
+
         return player_key_dict, dataframes
     
     def _process_data_sources(self, dataframes: Dict[str, pd.DataFrame], verbose: bool) -> Dict[str, pd.DataFrame]:
@@ -382,6 +404,10 @@ class RankingsProcessor:
         
         # Merge ranking data from all sources with standardized columns
         for key, df in dataframes.items():
+            # Skip hw-data and fpts-data - these are merged separately later
+            if key in ['hw-data', 'fpts-data']:
+                continue
+
             # Define columns to join based on league type
             if self.league_type in ['weekly', 'ros']:
                 # For weekly/ROS: only POS RANK, TIER, ECR, POS ECR (no RK or ADP)
@@ -393,7 +419,7 @@ class RankingsProcessor:
                 # For ADP source, also include ADP ROUND
                 if key == 'adp':
                     columns_to_join.append('ADP ROUND')
-            
+
             # Only join columns that exist and have data
             available_columns = [col for col in columns_to_join if col in df.columns]
             
@@ -421,7 +447,7 @@ class RankingsProcessor:
                 
                 if rename_dict:
                     df_rank = df_rank.rename(columns=rename_dict)
-        
+
         return df_rank
     
     def _calculate_average_rankings(self, df_rank: pd.DataFrame, verbose: bool) -> pd.DataFrame:

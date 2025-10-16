@@ -5,6 +5,7 @@ A comprehensive Python pipeline for processing fantasy football rankings data fr
 ## Features
 
 - **Multi-Source Data Processing**: Integrates rankings from FPTS, FantasyPros, JJ Zachariason, DraftShark, Hayden Winks, and PFF
+- **Automated Web Scraping**: Built-in scraper automatically fetches Hayden Winks rankings from Underdog Network for weekly/ROS rankings
 - **Multiple League Types**: Supports redraft, bestball, weekly, and rest-of-season (ROS) rankings
 - **Automated File Management**: Handles data flow between update, latest, and archive folders
 - **Advanced Analytics**: Calculates Value-Based Drafting (VBD) with position-specific baselines
@@ -76,11 +77,12 @@ uv run app/rankings.py --data-path "custom/update/path" --quiet
 
 The pipeline follows this automated workflow:
 
-1. **Input**: Place new ranking files in `data/rankings current/update/`
-2. **Archive Management**: Existing files in `latest/` are moved to `agg archive/`
-3. **Processing**: Rankings are processed, cleaned, and consolidated
-4. **Output**: Final rankings saved to `data/rankings current/latest/`
-5. **Cleanup**: Source files moved from `update/` to `raw archive/`
+1. **Auto-Scraping** (Weekly/ROS only): If HW rankings don't exist, automatically scrape from Underdog Network
+2. **Input**: Place new ranking files in `data/rankings current/update/`
+3. **Archive Management**: Existing files in `latest/` are moved to `agg archive/`
+4. **Processing**: Rankings are processed, cleaned, and consolidated
+5. **Output**: Final rankings saved to `data/rankings current/latest/`
+6. **Cleanup**: Source files moved from `update/` to `raw archive/`
 
 ## Data Structure
 
@@ -92,10 +94,22 @@ The pipeline integrates data from six primary ranking sources:
 - **FantasyPros**: Consensus expert rankings (ECR)
 - **JJ Zachariason**: Late Round Podcast rankings and tiers
 - **DraftShark**: Rankings with projections (floor, ceiling, consensus)
-- **Hayden Winks**: Expert rankings with HPPR projections
+- **Hayden Winks**: Expert rankings with HPPR projections *(auto-scraped for weekly/ROS)*
 - **PFF (Pro Football Focus)**: Rankings and projections
 
 For complete data source URLs, export instructions, and file naming conventions, see **[DATA_SOURCES.md](DATA_SOURCES.md)**.
+
+### Automated Web Scraping
+
+For **weekly** and **ROS** rankings, the pipeline includes a built-in web scraper for Hayden Winks rankings:
+
+- **Automatic**: Scraper runs automatically if `hw-week{N}.csv` or `hw-ros.csv` doesn't exist
+- **Smart**: Skips scraping if file already exists (prevents redundant network calls)
+- **Robust**: Continues processing with existing files if scraping fails
+- **Player Matching**: Uses fuzzy matching to standardize player names to IDs
+- **No Manual Downloads**: Eliminates need to manually download HW rankings from Underdog Network
+
+The scraper is located in `src/hw_scraper/` module.
 
 ### Output Format
 The consolidated rankings include:
@@ -134,38 +148,53 @@ fantasy_data_pipeline/
 │       ├── agg archive/     # Historical output files
 │       └── raw archive/     # Historical input files
 ├── src/
-│   ├── rankings_processor.py  # Main processing pipeline
-│   └── example_usage.py      # Usage examples
-├── scripts/
-│   ├── load_data.py          # Data loading utilities
-│   ├── clean_cols.py         # Column standardization
-│   └── update_player_key.py  # Player key management
+│   ├── rankings_processor.py     # Main processing pipeline
+│   ├── hw_scraper_integration.py # HW scraper integration
+│   ├── hw_scraper/              # Web scraper module
+│   │   ├── __init__.py          # Module exports
+│   │   └── scraper.py           # Web scraping and player matching
+│   ├── base_processor.py         # Unified data processing
+│   ├── data_loader.py           # File loading utilities
+│   └── player_utils.py          # Player name standardization
+├── app/
+│   ├── rankings.py              # CLI entry point
+│   └── player_stats.py          # Historical stats
 ├── notebooks/
-│   ├── ff-data.ipynb         # Data analysis
-│   ├── ff-player-key.ipynb   # Player key exploration
-│   └── ff-rankings.ipynb     # Rankings analysis
-└── player_key_dict.json     # Player name standardization
+│   ├── ff-data.ipynb            # Data analysis
+│   ├── ff-player-key.ipynb      # Player key exploration
+│   └── ff-rankings.ipynb        # Rankings analysis
+└── player_key_dict.json         # Player name standardization
 ```
 
 ## Key Components
 
 ### Rankings Processor (`src/rankings_processor.py`)
 - Loads and standardizes data from multiple sources
+- Orchestrates auto-scraping for weekly/ROS rankings
 - Calculates VBD metrics with position-specific baselines
 - Creates consolidated rankings with multiple scoring systems
 - Manages automated file archiving workflow
 
-### Data Loading (`scripts/load_data.py`)
-- Handles various file formats (CSV, Excel)
-- Provides consistent data loading interface
+### HW Scraper Integration (`src/hw_scraper_integration.py`)
+- Bridges hw_ranking_scraper with main pipeline
+- Auto-triggers scraping when HW files don't exist
+- Handles URL generation for Underdog Network
+- Provides graceful fallback on scraping failures
 
-### Column Standardization (`scripts/clean_cols.py`)
-- Maps column names across different data sources
-- Ensures consistent field naming
+### Base Processor (`src/base_processor.py`)
+- Unified processing logic for all data sources
+- Handles ranking calculations and standardization
+- Preserves pre-existing POS RANK from scraper output
+
+### Data Loading (`src/data_loader.py`)
+- Handles various file formats (CSV, Excel)
+- Auto-detects CSV headers (fixed bug with row misidentification)
+- Provides consistent data loading interface
 
 ### Player Key Management
 - `player_key_dict.json`: Master dictionary for player name standardization
-- `scripts/update_player_key.py`: Tools for maintaining player mappings
+- `src/player_utils.py`: Functions for player name cleaning and ID matching
+- `src/update_player_key.py`: Tools for maintaining player mappings
 
 ## Advanced Features
 
@@ -188,17 +217,21 @@ fantasy_data_pipeline/
 - `pandas` - Data manipulation and analysis
 - `numpy` - Numerical computations
 - `openpyxl` - Excel file support
+- `beautifulsoup4` - HTML parsing for web scraping
+- `requests` - HTTP requests for web scraping
 - `json` - Player key dictionary management
 - `datetime` - Timestamp generation
 - `shutil` - File operations
 
 ## Notes
 
+- **Weekly/ROS Rankings**: HW rankings are automatically scraped - no manual download needed
+- **Redraft/Bestball Rankings**: All sources require manual file downloads to update folder
 - Ensure player key dictionary is updated when new players are added
 - Place new ranking files in the `update/` directory before processing
 - The system preserves all historical data in timestamped archive folders
 - VBD calculations can be adjusted by modifying baseline values in the code
-- Processing typically takes 30-60 seconds depending on file sizes
+- Processing typically takes 30-60 seconds depending on file sizes (plus scraping time if needed)
 
 ## Example Output
 

@@ -109,14 +109,17 @@ class BaseProcessor:
         """Calculate positional rankings based on overall rank."""
         if 'POS' not in df.columns:
             return df
-            
+
         # Use ECR for FantasyPros data, RK for others
         rank_col = 'ECR' if 'ECR' in df.columns and self.source_name == 'fp' else 'RK'
         pos_rank_col = 'POS ECR' if rank_col == 'ECR' else 'POS RANK'
-        
-        if rank_col in df.columns:
+
+        # Only calculate positional rankings if:
+        # 1. The rank column exists, AND
+        # 2. The positional rank column doesn't already exist (e.g., from HW scraper)
+        if rank_col in df.columns and pos_rank_col not in df.columns:
             df[pos_rank_col] = df.groupby('POS')[rank_col].rank(method='min').astype('Int64')
-            
+
         return df
     
     def _handle_special_cases(self, df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
@@ -174,7 +177,7 @@ class BaseProcessor:
         for col in final_columns:
             if col not in df.columns:
                 df[col] = pd.NA
-                if verbose:
+                if verbose and col not in ['TEAM']:  # Don't warn for TEAM since it's expected to be missing from HW scraper
                     print(f"   ⚠ Added missing column: {col}")
         
         return df[final_columns].copy()
