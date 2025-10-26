@@ -39,8 +39,6 @@ src/
     └── cli/                   # CLI commands
 scripts/
 └── update_player_key.py       # Maintenance tools
-app/
-└── player_stats.py            # Legacy (still works)
 ```
 
 ### ✅ CLI Commands
@@ -109,11 +107,10 @@ from fantasy_pipeline.data import load_player_key_mapping
 
 ### ❌ Removed
 - `app/rankings.py` - replaced by `ff-rankings` CLI command
+- `app/player_stats.py` - replaced by `ff-stats` CLI command (moved to `src/fantasy_pipeline/core/stats_aggregator.py`)
 - `app/__init__.py` - no longer needed
+- `app/` directory - completely removed
 - Old `src/*.py` files - moved to `src/fantasy_pipeline/`
-
-### ⚠️ Deprecated but Still Works
-- `app/player_stats.py` - still functional, but use `ff-stats` CLI command instead
 
 ---
 
@@ -152,6 +149,7 @@ from fantasy_pipeline.data import load_player_key_mapping
 | `src/hw_scraper/scraper.py` | `src/fantasy_pipeline/scraper/hw_scraper.py` |
 | `src/hw_scraper_integration.py` | `src/fantasy_pipeline/scraper/integration.py` |
 | `app/rankings.py` | `src/fantasy_pipeline/cli/rankings.py` |
+| `app/player_stats.py` | `src/fantasy_pipeline/core/stats_aggregator.py` |
 | `src/update_player_key.py` | `scripts/update_player_key.py` |
 
 ---

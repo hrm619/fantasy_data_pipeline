@@ -104,15 +104,29 @@ For complete data source URLs, export instructions, and file naming conventions,
 
 ### Automated Web Scraping
 
-For **weekly** and **ROS** rankings, the pipeline includes a built-in web scraper for Hayden Winks rankings:
+For **weekly** and **ROS** rankings, the pipeline includes a built-in web scraper for Hayden Winks rankings from Underdog Network:
 
+**Features:**
 - **Automatic**: Scraper runs automatically if `hw-week{N}.csv` or `hw-ros.csv` doesn't exist
 - **Smart**: Skips scraping if file already exists (prevents redundant network calls)
 - **Robust**: Continues processing with existing files if scraping fails
-- **Player Matching**: Uses fuzzy matching to standardize player names to IDs
+- **Player Matching**: Uses fuzzy matching (85% threshold) to standardize player names to IDs
 - **No Manual Downloads**: Eliminates need to manually download HW rankings from Underdog Network
 
-The scraper is located in `src/fantasy_pipeline/scraper/` module.
+**How It Works:**
+1. Constructs URL based on week number (e.g., `week-8-fantasy-football-rankings-the-blueprint-2025`)
+2. Fetches article HTML from Underdog Network
+3. Uses CSS selector to locate post body section
+4. Parses position sections (QB, RB, WR, TE) using regex
+5. Extracts player data: "Player Name - XX.X yards/points in Underdog Pick'em"
+6. Handles Unicode characters (curly quotes: `'` instead of `'`)
+7. Matches players to standardized IDs from `player_key_dict.json`
+8. Extracts analysis/details text for each player
+9. Saves to `data/rankings current/update/hw-week{N}.csv` or `hw-ros.csv`
+
+**Output Columns:** `Player Name`, `Player ID`, `Standardized Name`, `Position`, `Position Rank`, `Yards Stat`, `Details`
+
+The scraper module is located in `src/fantasy_pipeline/scraper/`.
 
 ### Output Format
 The consolidated rankings include:
@@ -188,11 +202,20 @@ fantasy_data_pipeline/
 - Creates consolidated rankings with multiple scoring systems
 - Manages automated file archiving workflow
 
+### HW Scraper (`src/fantasy_pipeline/scraper/hw_scraper.py`)
+- Core web scraping logic using BeautifulSoup and requests
+- CSS selector-based HTML parsing (`div.styles_postLayoutBody__MYNJ_`)
+- Regex pattern matching for player entries with Unicode support
+- Fuzzy player name matching (85% similarity threshold)
+- Handles position sections (QB, RB, WR, TE)
+- Extracts yards/points stats and analysis details
+
 ### HW Scraper Integration (`src/fantasy_pipeline/scraper/integration.py`)
 - Integrates web scraper with main pipeline
 - Auto-triggers scraping when HW files don't exist
-- Handles URL generation for Underdog Network
+- Handles URL generation for Underdog Network (week-based URLs)
 - Provides graceful fallback on scraping failures
+- Checks for existing files to prevent redundant scraping
 
 ### Base Processor (`src/fantasy_pipeline/core/base_processor.py`)
 - Unified processing logic for all data sources
@@ -236,6 +259,37 @@ fantasy_data_pipeline/
 - `datetime` - Timestamp generation
 - `shutil` - File operations
 
+## Troubleshooting
+
+### HW Scraper Issues
+
+**If scraper returns 0 players:**
+1. Check URL format in `get_hw_scraper_url()` - should be `week-{N}-fantasy-football-rankings-the-blueprint-2025`
+2. Verify CSS selector `div.styles_postLayoutBody__MYNJ_` still targets post body (Next.js class names may change)
+3. Check position headers use format "Week {N} {POS} Rankings" (e.g., "Week 8 RB Rankings")
+4. Verify player entry format: "Player Name - XX.X yards/points in Underdog Pick'em"
+5. Note: Uses curly quote `'` (U+2019) not straight apostrophe `'`
+
+**To force re-scraping:**
+```python
+from fantasy_pipeline.scraper import auto_scrape_if_needed
+auto_scrape_if_needed(week=8, league_type='weekly', force=True)
+```
+
+**Manual debugging:**
+```python
+from fantasy_pipeline.scraper import scrape_fantasy_rankings
+url = "https://underdognetwork.com/football/fantasy-rankings/week-8-fantasy-football-rankings-the-blueprint-2025"
+df = scrape_fantasy_rankings(url)
+print(f"Scraped {len(df)} players")
+```
+
+### Other Common Issues
+
+- **Column Count Mismatches**: Data source file format changed - update `COLUMN_MAPPINGS` in `config.py`
+- **Missing Player IDs**: Add name variations to `player_key_dict.json` using `scripts/update_player_key.py`
+- **File Not Found**: Check file prefixes in `FILE_MAPPINGS` match actual filenames in update folder
+
 ## Notes
 
 - **Weekly/ROS Rankings**: HW rankings are automatically scraped - no manual download needed
@@ -245,6 +299,7 @@ fantasy_data_pipeline/
 - The system preserves all historical data in timestamped archive folders
 - VBD calculations can be adjusted by modifying baseline values in the code
 - Processing typically takes 30-60 seconds depending on file sizes (plus scraping time if needed)
+- Scraping adds 3-5 seconds for HW rankings fetch and parsing
 
 ## Testing
 

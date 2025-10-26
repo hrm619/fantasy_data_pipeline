@@ -101,8 +101,16 @@ def scrape_fantasy_rankings(url):
     # Parse HTML
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Get the main content text - Next.js renders everything in one continuous line
-    content = soup.get_text()
+    # Try to find the post body section using CSS selector
+    # The rankings start at a specific h1 element in the post body
+    post_body = soup.select_one('div.styles_postLayoutBody__MYNJ_')
+
+    if post_body:
+        # Get text from the post body section
+        content = post_body.get_text()
+    else:
+        # Fallback: get all text from page
+        content = soup.get_text()
 
     # Load player key dictionary
     player_key = load_player_key()
@@ -110,12 +118,19 @@ def scrape_fantasy_rankings(url):
     players_data = []
 
     # Split content by position headers
-    position_sections = {
-        'QB': re.search(r'Week \d+ QB Rankings(.*?)(?=Week \d+ (?:RB|WR|TE) Rankings|$)', content, re.DOTALL),
-        'RB': re.search(r'Week \d+ RB Rankings(.*?)(?=Week \d+ (?:WR|TE|QB) Rankings|$)', content, re.DOTALL),
-        'WR': re.search(r'Week \d+ WR Rankings(.*?)(?=Week \d+ (?:TE|QB) Rankings|$)', content, re.DOTALL),
-        'TE': re.search(r'Week \d+ TE Rankings(.*?)(?=Week \d+ QB Rankings|$)', content, re.DOTALL),
-    }
+    # Updated to handle both "Week X RB Rankings" and "RB Rankings" patterns
+    position_sections = {}
+    for pos in ['RB', 'WR', 'TE', 'QB']:
+        # Try "Week X {POS} Rankings" first
+        pattern = rf'Week \d+ {pos} Rankings(.*?)(?=Week \d+ (?:RB|WR|TE|QB) Rankings|Week \d+ Fantasy DEFs|$)'
+        match = re.search(pattern, content, re.DOTALL)
+
+        if not match:
+            # Fallback: try just "{POS} Rankings"
+            pattern = rf'{pos} Rankings(.*?)(?=(?:RB|WR|TE|QB) Rankings|Fantasy DEFs|$)'
+            match = re.search(pattern, content, re.DOTALL)
+
+        position_sections[pos] = match
 
     for position, section_match in position_sections.items():
         if not section_match:
@@ -123,10 +138,11 @@ def scrape_fantasy_rankings(url):
 
         section_text = section_match.group(1)
 
-        # Match player entries: "PlayerName - XX.X yards/completions/receptions in Underdog's Pick'em"
+        # Match player entries: "PlayerName - XX.X yards/completions/receptions/fantasy points in Underdog Pick'em"
         # The pattern captures the player name before " - " and yardage stats
         # Updated to handle McCaffrey, St. Brown, Smith-Njigba, D'Andre, etc.
-        player_pattern = r"([A-Z][A-Za-z\.''-]+(?:\s+[A-Z][A-Za-z\.''-]+)*)\s+-\s+([\d.]+)\s+(?:total yards|receiving yards|completions|receptions)\s+in\s+Underdog['\u2019]s Pick['\u2019]em"
+        # Handles both straight quotes (') and curly quotes ('')
+        player_pattern = r"([A-Z][A-Za-z\.''\u2019-]+(?:\s+[A-Z][A-Za-z\.''\u2019-]+)*)\s+-\s+([\d.]+)\s+(?:total yards|receiving yards|completions|receptions|fantasy points)\s+in\s+Underdog\s+Pick['\u2019]em"
 
         matches = []
         for match in re.finditer(player_pattern, section_text):
@@ -176,8 +192,8 @@ def scrape_fantasy_rankings(url):
             # The details are between the previous match end and current match start
             if prev_end > 0:
                 details_text = section_text[prev_end:match_start].strip()
-                # Clean up details - remove Underdog's Pick'em references and excess whitespace
-                details_text = re.sub(r"Underdog['\u2019]s Pick['\u2019]em\.?", '', details_text)
+                # Clean up details - remove Underdog Pick'em references and excess whitespace
+                details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", '', details_text)
                 details_text = re.sub(r'\s+', ' ', details_text).strip()
                 # Remove leading periods and spaces
                 details_text = details_text.lstrip('. ')
@@ -212,7 +228,7 @@ def scrape_fantasy_rankings(url):
                 # Take up to 1000 chars or until we hit another obvious section marker
                 details_text = remaining_text[:1000].strip()
 
-            details_text = re.sub(r"Underdog['\u2019]s Pick['\u2019]em\.?", '', details_text)
+            details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", '', details_text)
             details_text = re.sub(r'\s+', ' ', details_text).strip()
             # Remove leading periods and spaces
             details_text = details_text.lstrip('. ')

@@ -174,11 +174,11 @@ WEEKLY_COLUMN_MAPPINGS = {
         'POS',
         'TEAM',
         'NOTES',
+        'HPPR RANK',
+        'EXP RANK',
         'HPPR',
         'EXP',
-        'DIFF',
-        'HPPR RANK',
-        'EXP RANK'
+        'DIFF'
     ],
 
     # FPTS data for merging (fpts-xfp-avg.csv)
@@ -295,11 +295,11 @@ ROS_COLUMN_MAPPINGS = {
         'POS',
         'TEAM',
         'NOTES',
+        'HPPR RANK',
+        'EXP RANK',
         'HPPR',
         'EXP',
-        'DIFF',
-        'HPPR RANK',
-        'EXP RANK'
+        'DIFF'
     ],
 
     # FPTS data for merging (fpts-xfp-avg.csv)

@@ -63,7 +63,7 @@ Comprehensive testing with real data:
 ### 1. **Module Organization**
 ```
 src/fantasy_pipeline/
-├── core/                      # 4 processing modules
+├── core/                      # 5 processing modules
 ├── data/                      # 2 utility modules
 ├── scraper/                   # 2 scraping modules
 └── cli/                       # 3 CLI modules
@@ -137,13 +137,14 @@ uv run ff-rankings --league-type ros
 ### Breaking Changes
 1. **Package name**: `fantasy-data-pipeline` → `fantasy-pipeline`
 2. **Import paths**: `from src` → `from fantasy_pipeline`
-3. **CLI commands**: `app/rankings.py` → `ff-rankings`
+3. **CLI commands**: `app/rankings.py` → `ff-rankings`, `app/player_stats.py` → `ff-stats`
+4. **app/ directory**: Completely removed
 
 ### Backward Compatibility
-- ✅ `app/player_stats.py` still functional
 - ✅ Data directories unchanged
 - ✅ Configuration files preserved
 - ✅ Player key dictionary in same location
+- ✅ All functionality preserved (just in new locations)
 
 ---
 
@@ -161,7 +162,7 @@ uv run ff-rankings --league-type ros
 - `MIGRATION.md`
 - `RESTRUCTURING_COMPLETE.md`
 
-### Moved (11 files)
+### Moved (12 files)
 - `src/rankings_processor.py` → `src/fantasy_pipeline/core/rankings_processor.py`
 - `src/base_processor.py` → `src/fantasy_pipeline/core/base_processor.py`
 - `src/season_stats_processor.py` → `src/fantasy_pipeline/core/season_stats_processor.py`
@@ -173,12 +174,15 @@ uv run ff-rankings --league-type ros
 - `src/config.py` → `src/fantasy_pipeline/config.py`
 - `src/utils.py` → `src/fantasy_pipeline/utils.py`
 - `src/update_player_key.py` → `scripts/update_player_key.py`
+- `app/player_stats.py` → `src/fantasy_pipeline/core/stats_aggregator.py`
 
-### Removed (13 files)
+### Removed (14 files)
 - Old `src/*.py` files (replaced by new structure)
 - `src/hw_scraper/` directory (moved to fantasy_pipeline)
 - `app/rankings.py` (replaced by CLI command)
+- `app/player_stats.py` (moved to core package)
 - `app/__init__.py` (no longer needed)
+- `app/` directory (completely removed)
 
 ### Updated (4 files)
 - `pyproject.toml` - Version, entry points, build system
