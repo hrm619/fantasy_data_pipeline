@@ -293,6 +293,30 @@ class RankingsProcessor:
                     if self.league_type == 'weekly' and key in ['fp', 'pff']:
                         # FP and PFF weekly files have header in second row
                         dataframes[key] = load_data(full_path, header_row=1)
+                    elif self.league_type == 'weekly' and key == 'jj':
+                        # JJ weekly file: load second sheet, extract FLEX sections, and concatenate
+                        df_jj = load_data(full_path, sheet_name="Rankings and Tiers")
+                        # Find the first FLEX column
+                        flex_col_idx = None
+                        for i, col in enumerate(df_jj.columns):
+                            if 'FLEX' in str(col):
+                                flex_col_idx = i
+                                break
+                        if flex_col_idx is not None:
+                            # Extract first FLEX section (include Rank column before FLEX)
+                            # Columns: Rank.5, FLEX, Team.4, Opponent.5, Total.4, Pos, Matchup.4
+                            section1 = df_jj.iloc[:, flex_col_idx-1:flex_col_idx+6].copy()
+                            section1.columns = ['RK', 'PLAYER NAME', 'TEAM', 'OPP', 'TOTAL', 'POS', 'MATCHUP']
+
+                            # Extract second FLEX section
+                            # Columns: Rank.6, FLEX.1, Team.5, Opponent.6, Total.5, Pos.1, Matchup.5
+                            section2 = df_jj.iloc[:, flex_col_idx+6:flex_col_idx+13].copy()
+                            section2.columns = ['RK', 'PLAYER NAME', 'TEAM', 'OPP', 'TOTAL', 'POS', 'MATCHUP']
+
+                            # Concatenate both sections vertically
+                            dataframes[key] = pd.concat([section1, section2], ignore_index=True)
+                        else:
+                            raise ValueError(f"No FLEX column found in JJ weekly file: {matched_file}")
                     elif self.league_type == 'ros' and key == 'pff':
                         # PFF ROS files have header in second row
                         dataframes[key] = load_data(full_path, header_row=1)

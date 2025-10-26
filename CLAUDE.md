@@ -132,12 +132,28 @@ data/rankings current/raw archive/   # Old input files archived with timestamps
 - Files loaded but not processed - merged directly after averaging rankings
 - No historical stats merged for weekly/ROS league types
 
+### JJ Weekly File Processing (Special Handling)
+
+JJ Zachariason weekly files have a unique multi-position wide format with two FLEX sections side-by-side:
+- **File format**: Excel with "Rankings and Tiers" sheet containing position-specific columns (QB, RB, WR, TE, Defense) followed by two FLEX sections
+- **FLEX sections**: Two separate player lists (FLEX and FLEX.1) that need to be concatenated
+- **Processing logic** (`rankings_processor.py` lines 296-319):
+  1. Load "Rankings and Tiers" sheet
+  2. Find first FLEX column (typically column 34)
+  3. Extract Section 1: Columns before first FLEX through first FLEX section (7 columns: Rank, FLEX, Team, Opponent, Total, Pos, Matchup)
+  4. Extract Section 2: Next 7 columns (Rank, FLEX.1, Team, Opponent, Total, Pos, Matchup)
+  5. Rename both sections to standard column names
+  6. Concatenate vertically (typically 50 + 50 = 100 players)
+- **Column mapping**: `WEEKLY_COLUMN_MAPPINGS['jj']` expects 7 columns after concatenation
+- **Note**: This special handling is ONLY for weekly league type; ROS uses standard sheet loading
+
 ### File Loading Intelligence
 
 `src/data_loader.py` handles:
 - Auto-detection of CSV header rows (handles files with metadata rows)
 - Excel files with "Read Me" sheets (skips to data sheet)
 - Weekly: FP and PFF files have header in second row
+- Weekly: JJ files require special FLEX section extraction and concatenation (see "JJ Weekly File Processing" above)
 - ROS: Only PFF files have header in second row (FP uses first row)
 - ROS: JJ files require loading second Excel sheet "Rankings and Tiers"
 - Multi-file sources (e.g., FPTS has separate QB/RB/WR/TE files)
@@ -225,6 +241,15 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 - Averages: `avg_RK`, `avg_POS RANK`
 - Deltas: `ADP Delta`, `ECR Delta`, `ECR ADP Delta`
 - Historical: `HIST_` prefix for all historical stat columns
+
+### Player Key Dictionary Updates
+
+The `player_key_dict.json` file maps Player IDs to player names (including name variations):
+- **Structure**: `{"PlayerID": ["Player Name", "Alternate Name", ...]}`
+- **Updates**: Use `player_key_update.csv` with columns `PLAYER NAME, PLAYER ID`
+- **Script**: Automated comparison and update handled in conversation (see conversation history for Python script)
+- **Recent update**: Added 57 new player IDs (Oct 26, 2024) including Kyle Monangai (MonaKy00), Jaxon Smith-Njigba, De'Von Achane, etc.
+- **Usage**: See `src/fantasy_pipeline/data/player_utils.py` for loading and applying mappings
 
 ### File Archiving
 - Existing files in `latest/` → moved to `agg archive/{timestamp}/`
@@ -354,6 +379,12 @@ df.to_csv("hw-week7.csv", index=False)
 **Missing Player IDs**: Update `player_key_dict.json` with new player name variations using `scripts/update_player_key.py`
 
 **Weekly Rankings Issues**: Ensure `--week` parameter is provided and file mappings in `get_weekly_file_mappings()` are correct
+
+**JJ Weekly Column Mismatch**: If JJ weekly processing fails with column count errors:
+- Verify FLEX section extraction is working (should produce 100 rows from 2 sections of 50)
+- Check that `WEEKLY_COLUMN_MAPPINGS['jj']` has 7 columns: RK, PLAYER NAME, TEAM, OPP, TOTAL, POS, MATCHUP
+- Inspect Excel file to confirm FLEX column position (typically column 34)
+- Ensure both FLEX sections are being concatenated (check `rankings_processor.py` lines 296-319)
 
 **HW Scraper Failures**:
 - Check URL pattern in `get_hw_scraper_url()` matches current Underdog Network article naming (format: `week-{N}-fantasy-football-rankings-the-blueprint-2025`)

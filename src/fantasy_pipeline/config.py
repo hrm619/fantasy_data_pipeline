@@ -117,33 +117,40 @@ WEEKLY_COLUMN_MAPPINGS = {
         'TEAM',
         'POS',
         'OPP',
+        'UPSIDE',
+        'BUST',
         'MATCHUP'
     ],
 
-    # JJ Zachariason weekly data (appears to be multi-po sition format)
+    # JJ Zachariason weekly data (concatenated FLEX sections)
     'jj': [
-        'RK',
-        'PLAYER NAME',
-        'TEAM',
-        'OPP',
-        'TOTAL',
-        'MATCHUP',
-        'TIER',
-        'POS'
+        'RK',           # Rank column
+        'PLAYER NAME',  # FLEX column (player name)
+        'TEAM',         # Team
+        'OPP',          # Opponent
+        'TOTAL',        # Total points
+        'POS',          # Position
+        'MATCHUP'       # Matchup rating
     ],
 
     # DraftShark weekly data
     'ds': [
+        'RK',
+        'TEAM',
         'PLAYER NAME',
         'POS',
-        'TEAM',
-        'BYE',
+        'MATCHUP',
         'SOS',
+        'BYE',
         'FLOOR',
         'CONS',
         'PROJ',
         'CEIL',
-        '3D PROJ'
+        '3D PROJ',
+        'FANDUEL SALARY',
+        'FANDUEL $/PT',
+        'DRAFTKINGS SALARY',
+        'DRAFTKINGS $/PT'
     ],
 
     # Hayden Winks weekly data (scraped from Underdog Network)

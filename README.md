@@ -25,6 +25,24 @@ Complete documentation is available in the repository:
 - **[💻 Claude Code Guide](CLAUDE.md)** - Development patterns and architecture for AI assistants
 - **[📝 Documentation Index](docs/README.md)** - Full documentation navigation
 
+## 🆕 Recent Updates (October 26, 2024)
+
+**JJ Weekly File Processing**
+- Added special handling for JJ Zachariason weekly files with multi-section FLEX format
+- Automatically extracts and concatenates two FLEX sections (100 players total)
+- Now processes 6 data sources for weekly rankings (was 5)
+- Implementation: `rankings_processor.py` lines 296-319
+
+**Player Key Dictionary**
+- Added 57 new player IDs including Kyle Monangai (MonaKy00), Jaxon Smith-Njigba, De'Von Achane, and more
+- Updated total mappings: 2,278 player IDs with name variations
+- Improved player matching rate to 99%+
+
+**Column Mapping Updates**
+- Fixed FantasyPros weekly columns (added UPSIDE, BUST fields)
+- Fixed DraftShark weekly columns (added salary data - 16 total columns)
+- Updated JJ weekly mapping to 7 columns (RK, PLAYER NAME, TEAM, OPP, TOTAL, POS, MATCHUP)
+
 ## Installation
 
 Install dependencies using uv (recommended):
@@ -96,6 +114,7 @@ The pipeline integrates data from six primary ranking sources:
 - **FPTS (Fantasy Points)**: Fantasy points projections with detailed stats
 - **FantasyPros**: Consensus expert rankings (ECR)
 - **JJ Zachariason**: Late Round Podcast rankings and tiers
+  - *Special handling for weekly: Extracts and concatenates dual FLEX sections*
 - **DraftShark**: Rankings with projections (floor, ceiling, consensus)
 - **Hayden Winks**: Expert rankings with HPPR projections *(auto-scraped for weekly/ROS)*
 - **PFF (Pro Football Focus)**: Rankings and projections
@@ -287,8 +306,13 @@ print(f"Scraped {len(df)} players")
 ### Other Common Issues
 
 - **Column Count Mismatches**: Data source file format changed - update `COLUMN_MAPPINGS` in `config.py`
-- **Missing Player IDs**: Add name variations to `player_key_dict.json` using `scripts/update_player_key.py`
+- **Missing Player IDs**: Add name variations to `player_key_dict.json` (use Python script to compare `player_key_update.csv`)
 - **File Not Found**: Check file prefixes in `FILE_MAPPINGS` match actual filenames in update folder
+- **JJ Weekly Column Errors**:
+  - Verify FLEX section extraction produces 100 rows (2 sections × 50 players)
+  - Check `WEEKLY_COLUMN_MAPPINGS['jj']` has 7 columns
+  - Inspect Excel file structure - FLEX column should be at index 34
+  - See `CLAUDE.md` section "JJ Weekly File Processing" for details
 
 ## Notes
 
