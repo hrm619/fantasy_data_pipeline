@@ -22,6 +22,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "seaborn>=0.12.0",
     "ipykernel>=6.27.1",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.scripts]

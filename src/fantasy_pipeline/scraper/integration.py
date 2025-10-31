@@ -32,8 +32,8 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
         Exception: If scraping fails
     """
     # Validate inputs
-    if league_type == 'weekly' and week is None:
-        raise ValueError("Week number is required for weekly league type")
+    if league_type in ['weekly', 'ros'] and week is None:
+        raise ValueError(f"Week number is required for {league_type} league type")
 
     # Use default data path if not provided
     data_path = data_path or DEFAULT_PATHS['update_dir']
@@ -66,11 +66,8 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
                 if count > 0:
                     print(f"     {pos}: {count} players")
 
-        # Determine output filename
-        if league_type == 'weekly':
-            output_filename = f"hw-week{week}.csv"
-        else:
-            output_filename = "hw-ros.csv"
+        # Determine output filename (both weekly and ros use hw-week{N}.csv format)
+        output_filename = f"hw-week{week}.csv"
 
         output_path = os.path.join(data_path, output_filename)
 
@@ -103,10 +100,8 @@ def check_hw_scraper_output_exists(week: int = None, league_type: str = 'weekly'
     """
     data_path = data_path or DEFAULT_PATHS['update_dir']
 
-    if league_type == 'weekly':
-        filename = f"hw-week{week}.csv"
-    else:
-        filename = "hw-ros.csv"
+    # Both weekly and ros use hw-week{N}.csv format
+    filename = f"hw-week{week}.csv"
 
     file_path = os.path.join(data_path, filename)
     return os.path.exists(file_path)
@@ -132,11 +127,8 @@ def auto_scrape_if_needed(week: int = None, league_type: str = 'weekly',
 
     # Check if file already exists
     if not force and check_hw_scraper_output_exists(week, league_type, data_path):
-        if league_type == 'weekly':
-            filename = f"hw-week{week}.csv"
-        else:
-            filename = "hw-ros.csv"
-
+        # Both weekly and ros use hw-week{N}.csv format
+        filename = f"hw-week{week}.csv"
         file_path = os.path.join(data_path, filename)
 
         if verbose:

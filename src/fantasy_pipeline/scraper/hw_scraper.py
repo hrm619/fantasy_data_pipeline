@@ -11,7 +11,41 @@ import pandas as pd
 import re
 import json
 import os
-from difflib import SequenceMatcher
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except ImportError:
+    from difflib import SequenceMatcher
+    HAS_RAPIDFUZZ = False
+
+
+def normalize_player_name(name):
+    """
+    Normalize player name for matching by removing special characters and extra spaces.
+
+    This normalization makes it easier to match names across different sources that
+    may use different formatting (e.g., "Amon-Ra St. Brown" vs "AmonRa St Brown").
+
+    Args:
+        name (str): Player name to normalize
+
+    Returns:
+        str: Normalized player name (lowercase, no special chars, single spaces)
+    """
+    if not name:
+        return ""
+
+    # Convert to lowercase for case-insensitive matching
+    normalized = name.lower()
+
+    # Remove periods, apostrophes, hyphens, and other special characters
+    # Keep spaces and alphanumeric characters only
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+
+    # Collapse multiple spaces into single space and strip
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    return normalized
 
 
 def load_player_key():
@@ -36,7 +70,10 @@ def match_player_name(scraped_name, player_key):
     """
     Match a scraped player name to the player key dictionary.
 
-    Uses case-insensitive exact matching first, then fuzzy matching with a threshold.
+    Uses multiple matching strategies in order:
+    1. Exact match (case-insensitive, with original formatting)
+    2. Normalized exact match (removes special chars like periods, hyphens, apostrophes)
+    3. Fuzzy matching with threshold (using rapidfuzz if available, else difflib)
 
     Args:
         scraped_name (str): Player name as scraped from the website
@@ -46,21 +83,38 @@ def match_player_name(scraped_name, player_key):
         tuple: (player_id, standardized_name) or (None, None) if no match
     """
     scraped_lower = scraped_name.lower().strip()
+    scraped_normalized = normalize_player_name(scraped_name)
 
-    # Try exact match first (case-insensitive)
+    # Strategy 1: Try exact match first (case-insensitive, preserve formatting)
     for player_id, name_list in player_key.items():
         for name in name_list:
             if name.lower().strip() == scraped_lower:
                 return (player_id, name_list[0])  # Return ID and first name in list
 
-    # Try fuzzy matching with high threshold (0.85)
+    # Strategy 2: Try normalized exact match (removes special characters)
+    # This handles cases like "Amon-Ra St. Brown" vs "AmonRa St Brown"
+    for player_id, name_list in player_key.items():
+        for name in name_list:
+            name_normalized = normalize_player_name(name)
+            if name_normalized == scraped_normalized:
+                return (player_id, name_list[0])
+
+    # Strategy 3: Try fuzzy matching with lowered threshold
+    # Threshold reduced to 0.80 to handle suffixes like "III" and "Jr"
     best_match = None
-    best_score = 0.85  # Minimum threshold
+    best_score = 0.80  # Lowered from 0.85 to handle suffixes
 
     for player_id, name_list in player_key.items():
         for name in name_list:
-            # Calculate similarity ratio
-            ratio = SequenceMatcher(None, scraped_lower, name.lower().strip()).ratio()
+            name_normalized = normalize_player_name(name)
+
+            # Use rapidfuzz if available (better performance and accuracy)
+            if HAS_RAPIDFUZZ:
+                ratio = fuzz.ratio(scraped_normalized, name_normalized) / 100.0
+            else:
+                # Fallback to difflib
+                ratio = SequenceMatcher(None, scraped_normalized, name_normalized).ratio()
+
             if ratio > best_score:
                 best_score = ratio
                 best_match = (player_id, name_list[0])

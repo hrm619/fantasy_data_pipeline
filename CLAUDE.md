@@ -8,7 +8,38 @@ This is a Python pipeline for processing fantasy football rankings from multiple
 
 **Key Feature**: For weekly and ROS rankings, the pipeline includes an **integrated web scraper** (`src/fantasy_pipeline/scraper/`) that automatically fetches Hayden Winks rankings from Underdog Network, eliminating the need for manual file downloads.
 
-**Package Name**: `fantasy-pipeline` (v0.3.0) - installed as `fantasy_pipeline` Python package
+**Package Name**: `fantasy-pipeline` - installed as `fantasy_pipeline` Python package (see `pyproject.toml` for current version)
+
+## Requirements
+
+- **Python**: 3.10 or higher
+- **Package Manager**: `uv` (recommended) or `pip`
+- **Key Dependencies**: pandas, requests, beautifulsoup4, openpyxl, lxml, rapidfuzz
+- **Data Directory Structure**: The pipeline expects this directory layout:
+  ```
+  data/
+  └── rankings current/
+      ├── update/           # Place new ranking files here
+      ├── latest/           # Processed output appears here
+      ├── agg archive/      # Archived output files
+      └── raw archive/      # Archived input files
+  ```
+
+## Quick Start
+
+```bash
+# 1. Clone the repository and navigate to project directory
+cd fantasy_data_pipeline
+
+# 2. Install the package in editable mode
+uv pip install -e .
+
+# 3. Verify installation
+uv run ff-rankings --help
+
+# 4. Process rankings (place source files in data/rankings current/update/ first)
+uv run ff-rankings --league-type weekly --week 8
+```
 
 ## Development Commands
 
@@ -72,7 +103,7 @@ mypy src/
 
 The codebase follows a **unified processor pattern** that eliminates code duplication:
 
-1. **BaseProcessor** (`src/base_processor.py`): Contains all common logic for ranking data processing
+1. **BaseProcessor** (`src/fantasy_pipeline/core/base_processor.py`): Contains all common logic for ranking data processing
    - Creates/validates ranking columns
    - Calculates positional rankings
    - Handles league-type-specific logic (redraft, bestball, weekly)
@@ -80,7 +111,7 @@ The codebase follows a **unified processor pattern** that eliminates code duplic
 
 2. **Source-specific processor functions** (`process_fpts_data`, `process_fantasypros_data`, etc.): Thin wrappers that instantiate BaseProcessor for each data source
 
-3. **RankingsProcessor** (`src/rankings_processor.py`): Main orchestrator that:
+3. **RankingsProcessor** (`src/fantasy_pipeline/core/rankings_processor.py`): Main orchestrator that:
    - Loads files from multiple sources
    - Standardizes column names via config mappings
    - Processes each source through BaseProcessor
@@ -90,7 +121,7 @@ The codebase follows a **unified processor pattern** that eliminates code duplic
 
 ### Key Architectural Principles
 
-**Configuration-Driven Design**: All source-specific details live in `src/config.py`:
+**Configuration-Driven Design**: All source-specific details live in `src/fantasy_pipeline/config.py`:
 - `COLUMN_MAPPINGS`: Maps raw column names to standardized names for each source (redraft/bestball)
 - `WEEKLY_COLUMN_MAPPINGS`: Weekly-specific column mappings (different from draft)
 - `ROS_COLUMN_MAPPINGS`: Rest-of-season specific column mappings
@@ -100,7 +131,7 @@ The codebase follows a **unified processor pattern** that eliminates code duplic
 **Player Key Dictionary**: Central player name standardization system
 - `player_key_dict.json`: Master mapping of player names to unique IDs
 - Handles name variations across different sources (e.g., "Patrick Mahomes" vs "Pat Mahomes")
-- `src/player_utils.py`: Functions for loading and applying player mappings
+- `src/fantasy_pipeline/data/player_utils.py`: Functions for loading and applying player mappings
 
 **Data Flow Pipeline**:
 ```
@@ -137,7 +168,7 @@ data/rankings current/raw archive/   # Old input files archived with timestamps
 JJ Zachariason weekly files have a unique multi-position wide format with two FLEX sections side-by-side:
 - **File format**: Excel with "Rankings and Tiers" sheet containing position-specific columns (QB, RB, WR, TE, Defense) followed by two FLEX sections
 - **FLEX sections**: Two separate player lists (FLEX and FLEX.1) that need to be concatenated
-- **Processing logic** (`rankings_processor.py` lines 296-319):
+- **Processing logic** (see `_load_jj_weekly_file()` method in `src/fantasy_pipeline/core/rankings_processor.py`):
   1. Load "Rankings and Tiers" sheet
   2. Find first FLEX column (typically column 34)
   3. Extract Section 1: Columns before first FLEX through first FLEX section (7 columns: Rank, FLEX, Team, Opponent, Total, Pos, Matchup)
@@ -149,7 +180,7 @@ JJ Zachariason weekly files have a unique multi-position wide format with two FL
 
 ### File Loading Intelligence
 
-`src/data_loader.py` handles:
+`src/fantasy_pipeline/data/loader.py` handles:
 - Auto-detection of CSV header rows (handles files with metadata rows)
 - Excel files with "Read Me" sheets (skips to data sheet)
 - Weekly: FP and PFF files have header in second row
@@ -162,10 +193,10 @@ JJ Zachariason weekly files have a unique multi-position wide format with two FL
 
 ### Adding a New Data Source
 
-1. Add column mapping to `COLUMN_MAPPINGS` in `src/config.py`
+1. Add column mapping to `COLUMN_MAPPINGS` in `src/fantasy_pipeline/config.py`
 2. Add file prefix to `FILE_MAPPINGS` for each league type
 3. No processor code needed - BaseProcessor handles all sources automatically
-4. If source has unique logic, extend `BaseProcessor._handle_special_cases()`
+4. If source has unique logic, extend `BaseProcessor._handle_special_cases()` in `src/fantasy_pipeline/core/base_processor.py`
 
 ### Adding a New League Type
 
@@ -178,9 +209,9 @@ JJ Zachariason weekly files have a unique multi-position wide format with two FL
 
 ### Modifying Output Columns
 
-1. Update `STANDARD_OUTPUT_COLUMNS` or `WEEKLY_OUTPUT_COLUMNS` in `src/config.py`
-2. Modify `RankingsProcessor._organize_final_dataframe()` for column ordering
-3. Update `BaseProcessor._standardize_output()` if changing processor outputs
+1. Update `STANDARD_OUTPUT_COLUMNS` or `WEEKLY_OUTPUT_COLUMNS` in `src/fantasy_pipeline/config.py`
+2. Modify `RankingsProcessor._organize_final_dataframe()` in `src/fantasy_pipeline/core/rankings_processor.py` for column ordering
+3. Update `BaseProcessor._standardize_output()` in `src/fantasy_pipeline/core/base_processor.py` if changing processor outputs
 
 ### Working with Player Keys
 
@@ -247,8 +278,7 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 The `player_key_dict.json` file maps Player IDs to player names (including name variations):
 - **Structure**: `{"PlayerID": ["Player Name", "Alternate Name", ...]}`
 - **Updates**: Use `player_key_update.csv` with columns `PLAYER NAME, PLAYER ID`
-- **Script**: Automated comparison and update handled in conversation (see conversation history for Python script)
-- **Recent update**: Added 57 new player IDs (Oct 26, 2024) including Kyle Monangai (MonaKy00), Jaxon Smith-Njigba, De'Von Achane, etc.
+- **Script**: Automated comparison and update using `scripts/update_player_key.py`
 - **Usage**: See `src/fantasy_pipeline/data/player_utils.py` for loading and applying mappings
 
 ### File Archiving
@@ -256,6 +286,26 @@ The `player_key_dict.json` file maps Player IDs to player names (including name 
 - Processed files in `update/` → moved to `raw archive/{timestamp}/`
 - Historical stats files stay in `latest/` (not archived)
 - Timestamps: `YYYYMMDD_HHMM` format
+
+### Debugging and Logging
+
+**Verbose Mode**: Enable detailed logging for troubleshooting
+```bash
+# Add verbose flag to see detailed processing information
+uv run ff-rankings --league-type weekly --week 8 --verbose
+```
+
+**Common Debugging Steps**:
+1. **File loading issues**: Check that files exist in `data/rankings current/update/` and match expected prefixes in `FILE_MAPPINGS`
+2. **Column mapping errors**: Verify column counts match between source files and `COLUMN_MAPPINGS` entries
+3. **Player matching issues**: Enable verbose mode to see which players couldn't be matched to player IDs
+4. **Scraper failures**: Check network connectivity and inspect the Underdog Network page structure
+5. **Data merge problems**: Verify that hw-data and fpts-data files exist and have correct column names
+
+**Output Files**:
+- Consolidated rankings saved to `data/rankings current/latest/`
+- Check these files for the final processed output
+- Archives in `agg archive/` and `raw archive/` contain historical runs
 
 ## Code Organization
 
@@ -370,6 +420,23 @@ df.to_csv("hw-week7.csv", index=False)
 - **No TEAM Column**: HW scraper doesn't extract team info; TEAM is filled from other sources during merge
 - **POS RANK Preservation**: BaseProcessor skips recalculating POS RANK if already present from scraper
 
+## Common Gotchas
+
+**File Naming**: File prefixes in `data/rankings current/update/` must exactly match the patterns defined in `FILE_MAPPINGS`. Common mistakes:
+- Using wrong week format (e.g., `week8` instead of `week-8`)
+- Incorrect file extensions (expecting `.csv` but file is `.xlsx`)
+- Extra spaces or special characters in filenames
+
+**Column Order Matters**: When adding new data sources, the order of columns in `COLUMN_MAPPINGS` must match the exact column order in the source file (left to right)
+
+**League Type Differences**: Weekly and ROS use different column mappings (`WEEKLY_COLUMN_MAPPINGS`, `ROS_COLUMN_MAPPINGS`) than redraft/bestball (`COLUMN_MAPPINGS`). Don't mix them up.
+
+**Player Name Standardization**: Player names from different sources may vary (e.g., "Pat Mahomes" vs "Patrick Mahomes"). Always update `player_key_dict.json` when adding new players.
+
+**Excel Sheet Names**: Some sources (like JJ) use specific Excel sheet names. The loader expects "Rankings and Tiers" for JJ ROS files. Verify sheet names if you encounter Excel loading errors.
+
+**HW Scraper Dependencies**: The scraper requires `beautifulsoup4`, `requests`, and `rapidfuzz`. If scraping fails, verify these packages are installed.
+
 ## Troubleshooting
 
 **File Not Found Errors**: Check that file prefixes in `FILE_MAPPINGS` match actual filenames in `data/rankings current/update/`
@@ -384,7 +451,7 @@ df.to_csv("hw-week7.csv", index=False)
 - Verify FLEX section extraction is working (should produce 100 rows from 2 sections of 50)
 - Check that `WEEKLY_COLUMN_MAPPINGS['jj']` has 7 columns: RK, PLAYER NAME, TEAM, OPP, TOTAL, POS, MATCHUP
 - Inspect Excel file to confirm FLEX column position (typically column 34)
-- Ensure both FLEX sections are being concatenated (check `rankings_processor.py` lines 296-319)
+- Ensure both FLEX sections are being concatenated (check `_load_jj_weekly_file()` method in `src/fantasy_pipeline/core/rankings_processor.py`)
 
 **HW Scraper Failures**:
 - Check URL pattern in `get_hw_scraper_url()` matches current Underdog Network article naming (format: `week-{N}-fantasy-football-rankings-the-blueprint-2025`)
@@ -397,5 +464,5 @@ df.to_csv("hw-week7.csv", index=False)
 
 **Missing HW Rankings Data**:
 - Verify scraped file was created in update folder (check for `hw-week{N}.csv` or `hw-ros.csv`)
-- Check data_loader.py CSV header detection (fixed bug where certain rows were misidentified as headers)
-- Ensure BaseProcessor doesn't recalculate POS RANK when already present
+- Check `src/fantasy_pipeline/data/loader.py` CSV header detection (handles files with metadata rows)
+- Ensure BaseProcessor doesn't recalculate POS RANK when already present from scraper

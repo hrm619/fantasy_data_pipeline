@@ -30,7 +30,7 @@ def main(args=None):
         parser.add_argument(
             '--week',
             type=int,
-            help='Week number for weekly rankings (required when league-type is weekly)'
+            help='Week number for weekly/ROS rankings (required when league-type is weekly or ros)'
         )
         parser.add_argument(
             '--data-path',
@@ -51,9 +51,9 @@ def main(args=None):
         )
         args = parser.parse_args()
 
-    # Validate week parameter for weekly league type
-    if args.league_type == 'weekly' and args.week is None:
-        print("Error: --week parameter is required when --league-type is 'weekly'")
+    # Validate week parameter for weekly and ROS league types
+    if args.league_type in ['weekly', 'ros'] and args.week is None:
+        print(f"Error: --week parameter is required when --league-type is '{args.league_type}'")
         return 1
 
     try:

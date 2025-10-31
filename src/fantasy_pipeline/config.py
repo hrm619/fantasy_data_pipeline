@@ -429,22 +429,42 @@ def get_weekly_file_mappings(week: int) -> dict:
     }
 
 
+def get_ros_file_mappings(week: int) -> dict:
+    """
+    Generate ROS file mappings with the specified week number.
+
+    Args:
+        week (int): Week number to use in file mappings
+
+    Returns:
+        dict: File mappings with week number dynamically generated
+    """
+    return {
+        "fpts": ["2025"],  # Multiple files: QB and WR/RB/TE
+        "jj": "ROSRankings_",
+        "hw": f"hw-week{week}",  # Scraped HW rankings from Underdog Network (same as weekly)
+        "fp": "FantasyPros_",
+        "pff": "Draft-rankings-export",
+        "ds": "ros-rankings-half-ppr",
+        # Data files for merging
+        "hw-data": "tableDownload",  # HW data for merging (HPPR, Exp, Diff)
+        "fpts-data": "fpts-xfp-avg"  # FPTS data for merging (numeric fields)
+    }
+
+
 def get_hw_scraper_url(week: int = None, league_type: str = 'weekly') -> str:
     """
     Generate the Underdog Network URL for HW rankings scraper.
 
     Args:
-        week (int): Week number for weekly rankings
+        week (int): Week number for weekly/ROS rankings
         league_type (str): League type ('weekly' or 'ros')
 
     Returns:
         str: URL for the HW rankings article
     """
-    if league_type == 'weekly' and week:
+    if league_type in ['weekly', 'ros'] and week:
+        # Both weekly and ROS use the same URL pattern with week number
         return f"https://underdognetwork.com/football/fantasy-rankings/week-{week}-fantasy-football-rankings-the-blueprint-2025"
-    elif league_type == 'ros':
-        # For ROS, we can use the latest weekly rankings URL as a reasonable default
-        # User can override this if needed
-        return "https://underdognetwork.com/football/fantasy-rankings/week-6-fantasy-football-rankings-the-blueprint-2025"
     else:
         raise ValueError(f"Invalid parameters for HW scraper URL: league_type={league_type}, week={week}")

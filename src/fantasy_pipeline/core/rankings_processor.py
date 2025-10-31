@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 from ..config import (
     COLUMN_MAPPINGS, WEEKLY_COLUMN_MAPPINGS, ROS_COLUMN_MAPPINGS,
-    FILE_MAPPINGS, SUPPORTED_POSITIONS, DEFAULT_PATHS, get_weekly_file_mappings
+    FILE_MAPPINGS, SUPPORTED_POSITIONS, DEFAULT_PATHS, get_weekly_file_mappings, get_ros_file_mappings
 )
 from ..data.loader import load_data
 from ..data.player_utils import clean_player_names, load_player_key_mapping, add_player_ids
@@ -46,8 +46,8 @@ class RankingsProcessor:
         if league_type not in FILE_MAPPINGS:
             raise ValueError(f"Unsupported league type: {league_type}. Supported types: {list(FILE_MAPPINGS.keys())}")
 
-        if league_type == 'weekly' and week is None:
-            raise ValueError("Week number is required for weekly league type")
+        if league_type in ['weekly', 'ros'] and week is None:
+            raise ValueError(f"Week number is required for {league_type} league type")
 
         self.league_type = league_type
         self.week = week
@@ -56,6 +56,8 @@ class RankingsProcessor:
         # Set file mapping based on league type
         if league_type == 'weekly':
             self.file_mapping = get_weekly_file_mappings(week)
+        elif league_type == 'ros':
+            self.file_mapping = get_ros_file_mappings(week)
         else:
             self.file_mapping = FILE_MAPPINGS[league_type]
 
@@ -92,7 +94,7 @@ class RankingsProcessor:
         Returns:
             str: Path to the generated CSV file
         """
-        # Handle week parameter for weekly rankings
+        # Handle week parameter for weekly and ROS rankings
         if self.league_type == 'weekly':
             if week is not None:
                 # Update week if provided in method call
@@ -100,6 +102,13 @@ class RankingsProcessor:
                 self.file_mapping = get_weekly_file_mappings(week)
             elif self.week is None:
                 raise ValueError("Week number is required for weekly rankings")
+        elif self.league_type == 'ros':
+            if week is not None:
+                # Update week if provided in method call
+                self.week = week
+                self.file_mapping = get_ros_file_mappings(week)
+            elif self.week is None:
+                raise ValueError("Week number is required for ROS rankings")
         # Use defaults if not provided
         data_path = data_path or DEFAULT_PATHS['update_dir']
         player_key_path = player_key_path or DEFAULT_PATHS['player_key_file']
