@@ -80,7 +80,8 @@ class RankingsProcessor:
                         player_key_path: str = None,
                         base_data_dir: str = None,
                         week: int = None,
-                        verbose: bool = True) -> str:
+                        verbose: bool = True,
+                        return_dataframe: bool = False) -> "str | pd.DataFrame":
         """
         Process fantasy football rankings from multiple sources and create a consolidated ranking file.
         
@@ -179,7 +180,9 @@ class RankingsProcessor:
         if verbose:
             print("\n🎉 Rankings processing completed successfully!")
             print("=" * 60)
-        
+
+        if return_dataframe:
+            return df_rank
         return output_path
     
     def _setup_directories(self, base_data_dir: str, verbose: bool) -> Dict[str, str]:
@@ -815,26 +818,26 @@ class RankingsProcessor:
 
 
 # Convenience functions for different league types
-def process_redraft_rankings(**kwargs) -> str:
+def process_redraft_rankings(**kwargs) -> "str | pd.DataFrame":
     """Process redraft league rankings."""
     processor = RankingsProcessor('redraft')
     return processor.process_rankings(**kwargs)
 
-def process_bestball_rankings(**kwargs) -> str:
+def process_bestball_rankings(**kwargs) -> "str | pd.DataFrame":
     """Process bestball league rankings."""
     processor = RankingsProcessor('bestball')
     return processor.process_rankings(**kwargs)
 
-def process_weekly_rankings(week: int = None, **kwargs) -> str:
+def process_weekly_rankings(week: int = None, **kwargs) -> "str | pd.DataFrame":
     """Process weekly league rankings."""
     processor = RankingsProcessor('weekly', week)
     return processor.process_rankings(**kwargs)
 
-def process_ros_rankings(**kwargs) -> str:
+def process_ros_rankings(**kwargs) -> "str | pd.DataFrame":
     """Process rest-of-season (ROS) league rankings."""
     processor = RankingsProcessor('ros')
     return processor.process_rankings(**kwargs)
 
-def process_fantasy_rankings_redraft(**kwargs) -> str:
+def process_fantasy_rankings_redraft(**kwargs) -> "str | pd.DataFrame":
     """Backward compatibility function for redraft rankings."""
     return process_redraft_rankings(**kwargs)

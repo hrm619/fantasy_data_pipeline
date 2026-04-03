@@ -171,6 +171,7 @@ cython_debug/
 
 # Large data directories
 data/
+!src/fantasy_pipeline/data/
 datasets/
 raw_data/
 processed_data/
