@@ -9,7 +9,7 @@ that can be merged into the rankings pipeline.
 import pandas as pd
 import numpy as np
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from datetime import datetime
 
 from .season_stats_processor import calculate_season_stats
@@ -85,7 +85,7 @@ def aggregate_player_historical_stats(
                 raise ValueError(f"No data found for season {season_filter}")
         else:
             if verbose:
-                print(f"   ⚠️  No SEASON column found, using all data")
+                print("   ⚠️  No SEASON column found, using all data")
     
     # Process season statistics
     season_stats = calculate_season_stats(season_df, verbose=verbose)
@@ -179,11 +179,7 @@ def _merge_season_and_weekly_data(season_df: pd.DataFrame, weekly_df: pd.DataFra
             on='PLAYER_ID', 
             how='left'
         )
-        
-        # Calculate match statistics
-        player_id_matches = merged_df['PLAYER_ID'].notna().sum()
-        weekly_data_matches = merged_df['FIRST_HALF_AVG'].notna().sum()
-        
+
     else:
         # Fallback to name matching
         if verbose:
@@ -216,10 +212,7 @@ def _merge_season_and_weekly_data(season_df: pd.DataFrame, weekly_df: pd.DataFra
             right_on=weekly_merge_col, 
             how='left'
         )
-        
-        # Calculate match statistics  
-        weekly_data_matches = merged_df['FIRST_HALF_AVG'].notna().sum()
-    
+
     # Clean up column names to avoid _x/_y suffixes from merging
     # Prioritize season data for shared columns like POS, TEAM
     columns_to_clean = ['POS', 'TEAM', 'PLAYER NAME']
@@ -243,8 +236,7 @@ def _merge_season_and_weekly_data(season_df: pd.DataFrame, weekly_df: pd.DataFra
     if verbose:
         season_count = len(season_df)
         weekly_count = len(weekly_df_clean)
-        merged_count = len(merged_df)
-        
+
         # Check for weekly data columns to calculate match rate
         weekly_indicator_cols = ['FIRST_HALF_AVG', 'SECOND_HALF_AVG', 'AVG_NO_OUTLIERS']
         weekly_col_found = None
@@ -479,12 +471,12 @@ def _validate_aggregated_data(df: pd.DataFrame, verbose: bool) -> None:
 
 def _print_aggregation_summary(df: pd.DataFrame) -> None:
     """Print summary statistics for the aggregated dataset."""
-    print(f"\n📋 Aggregated Data Summary:")
+    print("\n📋 Aggregated Data Summary:")
     print(f"   Total players: {len(df)}")
     
     if 'POS' in df.columns:
         pos_counts = df['POS'].value_counts()
-        print(f"   Position breakdown:")
+        print("   Position breakdown:")
         for pos, count in pos_counts.items():
             print(f"     {pos}: {count} players")
     
@@ -591,9 +583,9 @@ def merge_with_redraft_rankings(rankings_file_path: str,
     hist_id_col = 'PLAYER ID' if 'PLAYER ID' in hist_df.columns else 'PLAYER_ID'
     
     if rankings_id_col not in rankings_df.columns:
-        raise ValueError(f"Rankings file must have 'PLAYER ID' or 'PLAYER_ID' column")
+        raise ValueError("Rankings file must have 'PLAYER ID' or 'PLAYER_ID' column")
     if hist_id_col not in hist_df.columns:
-        raise ValueError(f"Historical stats must have 'PLAYER ID' or 'PLAYER_ID' column")
+        raise ValueError("Historical stats must have 'PLAYER ID' or 'PLAYER_ID' column")
     
     # Standardize to "PLAYER ID" (with space) for consistency with redraft pipeline
     if rankings_id_col != 'PLAYER ID':
@@ -715,7 +707,7 @@ def create_rankings_ready_dataset(aggregated_df: pd.DataFrame,
     
     if verbose:
         print(f"   ✓ Created rankings dataset: {len(result_df)} players, {len(result_df.columns)} columns")
-        print(f"   ✓ Historical stats prefixed with 'HIST_' for integration")
+        print("   ✓ Historical stats prefixed with 'HIST_' for integration")
     
     # Save to file if output directory specified
     if output_dir is not None:
@@ -758,7 +750,7 @@ def main():
         print(f"\n✅ Success! Aggregated {len(rankings_ready)} players for rankings integration")
         
         # Show sample of results
-        print(f"\nSample of aggregated data:")
+        print("\nSample of aggregated data:")
         sample_cols = ['PLAYER NAME', 'POS', 'HIST_TOTAL_FPTS', 'HIST_FIRST_HALF_AVG', 'HIST_SECOND_HALF_AVG']
         available_sample_cols = [col for col in sample_cols if col in rankings_ready.columns]
         print(rankings_ready[available_sample_cols].head())

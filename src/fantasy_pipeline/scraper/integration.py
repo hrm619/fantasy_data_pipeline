@@ -7,10 +7,14 @@ update folder for processing.
 """
 
 import os
-from pathlib import Path
 
 from .hw_scraper import scrape_fantasy_rankings
 from ..config import get_hw_scraper_url, DEFAULT_PATHS
+
+
+def _hw_output_filename(week: int) -> str:
+    """Return the scraped HW rankings filename (both weekly and ROS use this format)."""
+    return f"hw-week{week}.csv"
 
 
 def run_hw_scraper(week: int = None, league_type: str = 'weekly',
@@ -45,7 +49,7 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
     url = get_hw_scraper_url(week, league_type)
 
     if verbose:
-        print(f"\n🕷️  Running HW Rankings Scraper...")
+        print("\n🕷️  Running HW Rankings Scraper...")
         print(f"   League Type: {league_type.upper()}")
         if week:
             print(f"   Week: {week}")
@@ -54,22 +58,20 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
     try:
         # Run the scraper
         if verbose:
-            print(f"   Fetching and parsing data...")
+            print("   Fetching and parsing data...")
 
         df = scrape_fantasy_rankings(url)
 
         if verbose:
             print(f"   ✓ Scraped {len(df)} players")
-            print(f"   Position breakdown:")
+            print("   Position breakdown:")
             for pos in ['QB', 'RB', 'WR', 'TE']:
                 count = len(df[df['Position'] == pos])
                 if count > 0:
                     print(f"     {pos}: {count} players")
 
         # Determine output filename (both weekly and ros use hw-week{N}.csv format)
-        output_filename = f"hw-week{week}.csv"
-
-        output_path = os.path.join(data_path, output_filename)
+        output_path = os.path.join(data_path, _hw_output_filename(week))
 
         # Save to CSV
         df.to_csv(output_path, index=False)
@@ -100,10 +102,7 @@ def check_hw_scraper_output_exists(week: int = None, league_type: str = 'weekly'
     """
     data_path = data_path or DEFAULT_PATHS['update_dir']
 
-    # Both weekly and ros use hw-week{N}.csv format
-    filename = f"hw-week{week}.csv"
-
-    file_path = os.path.join(data_path, filename)
+    file_path = os.path.join(data_path, _hw_output_filename(week))
     return os.path.exists(file_path)
 
 
@@ -127,13 +126,11 @@ def auto_scrape_if_needed(week: int = None, league_type: str = 'weekly',
 
     # Check if file already exists
     if not force and check_hw_scraper_output_exists(week, league_type, data_path):
-        # Both weekly and ros use hw-week{N}.csv format
-        filename = f"hw-week{week}.csv"
-        file_path = os.path.join(data_path, filename)
+        file_path = os.path.join(data_path, _hw_output_filename(week))
 
         if verbose:
             print(f"\n✓ HW scraper output already exists: {file_path}")
-            print(f"  Skipping scraping (use force=True to re-scrape)")
+            print("  Skipping scraping (use force=True to re-scrape)")
 
         return file_path
 

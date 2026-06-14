@@ -223,8 +223,6 @@ def scrape_fantasy_rankings(url):
                 # Count capitals - if more than expected for Mc/Mac names, it's likely concatenated
                 capitals = [i for i, c in enumerate(word) if c.isupper()]
                 if len(capitals) >= 2 and not word.startswith(('Mc', 'Mac', 'St.', 'De')):
-                    # Find last capital and split there
-                    last_cap_idx = capitals[-1]
                     # Look for pattern: lowercase then uppercase (concatenation point)
                     for i in range(len(word) - 1):
                         if word[i].islower() and word[i+1].isupper():
@@ -292,4 +290,14 @@ def scrape_fantasy_rankings(url):
 
     # Create DataFrame
     df = pd.DataFrame(players_data)
+
+    # Fail loudly on a likely format change rather than silently returning nothing.
+    # (The pipeline's auto_scrape_if_needed catches this and continues with existing files.)
+    if df.empty:
+        raise RuntimeError(
+            "HW scraper parsed 0 players — the Underdog Network page format likely changed. "
+            "Check the post-body CSS selector (div.styles_postLayoutBody__MYNJ_) and the "
+            "position-header regex in scrape_fantasy_rankings()."
+        )
+
     return df

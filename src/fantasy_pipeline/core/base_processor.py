@@ -6,7 +6,6 @@ jj_processor, pff_processor, ds_processor, and adp_processor.
 """
 
 import pandas as pd
-from typing import List, Dict, Any, Optional
 from ..config import STANDARD_OUTPUT_COLUMNS, WEEKLY_OUTPUT_COLUMNS, ROS_OUTPUT_COLUMNS
 
 
@@ -84,7 +83,7 @@ class BaseProcessor:
             if verbose and any(pd.notna(original_values)):
                 # Only show message if positions actually had numbers
                 if any(val for val in original_values if pd.notna(val) and any(c.isdigit() for c in str(val))):
-                    print(f"   ✓ Cleaned position data (removed position numbers)")
+                    print("   ✓ Cleaned position data (removed position numbers)")
 
         return df
 

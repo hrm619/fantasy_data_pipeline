@@ -169,6 +169,9 @@ cython_debug/
 *.db
 *.sqlite
 
+# Keep canonical data the pipeline requires (overrides the broad *.json rule above)
+!player_key_dict.json
+
 # Large data directories
 data/
 !src/fantasy_pipeline/data/

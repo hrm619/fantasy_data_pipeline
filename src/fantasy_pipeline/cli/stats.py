@@ -6,9 +6,7 @@ Generate and merge historical player statistics for rankings integration.
 """
 
 import sys
-import os
 import argparse
-from pathlib import Path
 
 
 def main(args=None):

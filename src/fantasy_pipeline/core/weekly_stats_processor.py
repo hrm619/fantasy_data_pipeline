@@ -7,8 +7,8 @@ first half average, second half average, and average without outliers.
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple
-from ..utils import validate_dataframe, safe_numeric_conversion, print_processing_summary
+from typing import Dict, List
+from ..utils import validate_dataframe, print_processing_summary
 
 
 def calculate_weekly_trends(df: pd.DataFrame, 
@@ -188,7 +188,7 @@ def _calculate_outlier_adjusted_average(df: pd.DataFrame, week_columns: List[str
     df['NO_OUTLIERS_PPG'] = outlier_averages
     
     if verbose:
-        print(f"   ✓ Calculated averages excluding 2 highest and 2 lowest games (zeros excluded)")
+        print("   ✓ Calculated averages excluding 2 highest and 2 lowest games (zeros excluded)")
 
 
 def _calculate_consistency_metrics(df: pd.DataFrame, week_columns: List[str], verbose: bool) -> None:
@@ -254,7 +254,7 @@ def _calculate_game_totals(df: pd.DataFrame, week_columns: List[str], verbose: b
 
 def _print_weekly_summary(df: pd.DataFrame) -> None:
     """Print summary statistics for the weekly trends data."""
-    print(f"\n📊 Weekly Trends Summary:")
+    print("\n📊 Weekly Trends Summary:")
     
     if 'TOTAL_GAMES' in df.columns:
         avg_games = df['TOTAL_GAMES'].mean()
@@ -277,7 +277,7 @@ def _print_weekly_summary(df: pd.DataFrame) -> None:
             'AVG_NO_OUTLIERS': 'mean',
             'CONSISTENCY_SCORE': 'mean'
         }).round(1)
-        print(f"   Average stats by position:")
+        print("   Average stats by position:")
         for pos, stats in pos_stats.iterrows():
             print(f"     {pos}: 1H={stats['FIRST_HALF_AVG']:.1f}, 2H={stats['SECOND_HALF_AVG']:.1f}, "
                   f"No outliers={stats['AVG_NO_OUTLIERS']:.1f}, Consistency={stats['CONSISTENCY_SCORE']:.1f}")
@@ -341,7 +341,7 @@ def validate_weekly_trends(df: pd.DataFrame, verbose: bool = True) -> Dict[str, 
         validation_results['non_negative_consistency'] = (df['CONSISTENCY_SCORE'] >= 0).all()
     
     if verbose:
-        print(f"\n✅ Weekly Trends Validation:")
+        print("\n✅ Weekly Trends Validation:")
         for check, passed in validation_results.items():
             status = "✓" if passed else "❌"
             print(f"   {status} {check.replace('_', ' ').title()}: {'Passed' if passed else 'Failed'}")
@@ -390,7 +390,7 @@ def compare_half_season_performance(df: pd.DataFrame, verbose: bool = True) -> p
     comparison_df['TREND_CATEGORY'] = comparison_df['HALF_SEASON_PCT_CHANGE'].apply(categorize_trend)
     
     if verbose:
-        print(f"\n📈 Half-Season Performance Analysis:")
+        print("\n📈 Half-Season Performance Analysis:")
         trend_counts = comparison_df['TREND_CATEGORY'].value_counts()
         for trend, count in trend_counts.items():
             print(f"   {trend}: {count} players")

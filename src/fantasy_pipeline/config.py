@@ -4,6 +4,56 @@ Configuration module for fantasy football data processing.
 Centralizes all column mappings, file lookups, and constants.
 """
 
+# Shared column layouts reused across weekly and ROS mappings (identical formats).
+# Defined once here to keep WEEKLY_COLUMN_MAPPINGS and ROS_COLUMN_MAPPINGS in sync.
+
+# Hayden Winks rankings as scraped from Underdog Network
+_HW_SCRAPER_COLUMNS = [
+    'PLAYER NAME',
+    'PLAYER ID',
+    'STANDARDIZED NAME',
+    'POS',
+    'POS RANK',
+    'YARDS STAT',
+    'DETAILS'
+]
+
+# HW data for merging (tableDownload.csv) - provides HPPR, EXP, DIFF
+_HW_DATA_COLUMNS = [
+    'PLAYER NAME',
+    'POS',
+    'TEAM',
+    'NOTES',
+    'HPPR RANK',
+    'EXP RANK',
+    'HPPR',
+    'EXP',
+    'DIFF'
+]
+
+# FPTS data for merging (fpts-xfp-avg.csv) - numeric performance fields
+_FPTS_DATA_COLUMNS = [
+    'RK',
+    'PLAYER NAME',
+    'TEAM',
+    'POS',
+    'GP',
+    'FPTS',
+    'XFP',
+    'FPTS_DIFF',  # FPTS - XFP difference
+    'TD',
+    'XTD',
+    'TD_DIFF',  # TD - XTD difference
+    'OPP5',
+    'OPP10',
+    'OPP20',
+    'RUSH',
+    'AIRYDS',
+    'TGT',
+    'EZTGT',
+    'DEEPTGT'
+]
+
 # Standard column names for different data sources
 COLUMN_MAPPINGS = {
     # FPTS data (Scott Barrett)
@@ -154,15 +204,7 @@ WEEKLY_COLUMN_MAPPINGS = {
     ],
 
     # Hayden Winks weekly data (scraped from Underdog Network)
-    'hw': [
-        'PLAYER NAME',
-        'PLAYER ID',
-        'STANDARDIZED NAME',
-        'POS',
-        'POS RANK',
-        'YARDS STAT',
-        'DETAILS'
-    ],
+    'hw': _HW_SCRAPER_COLUMNS,
 
     # PFF weekly data (header in second row)
     'pff': [
@@ -176,40 +218,10 @@ WEEKLY_COLUMN_MAPPINGS = {
     ],
 
     # HW data for merging (tableDownload.csv)
-    'hw-data': [
-        'PLAYER NAME',
-        'POS',
-        'TEAM',
-        'NOTES',
-        'HPPR RANK',
-        'EXP RANK',
-        'HPPR',
-        'EXP',
-        'DIFF'
-    ],
+    'hw-data': _HW_DATA_COLUMNS,
 
     # FPTS data for merging (fpts-xfp-avg.csv)
-    'fpts-data': [
-        'RK',
-        'PLAYER NAME',
-        'TEAM',
-        'POS',
-        'GP',
-        'FPTS',
-        'XFP',
-        'FPTS_DIFF',  # FPTS - XFP difference
-        'TD',
-        'XTD',
-        'TD_DIFF',  # TD - XTD difference
-        'OPP5',
-        'OPP10',
-        'OPP20',
-        'RUSH',
-        'AIRYDS',
-        'TGT',
-        'EZTGT',
-        'DEEPTGT'
-    ]
+    'fpts-data': _FPTS_DATA_COLUMNS
 }
 
 # ROS (Rest of Season) column mappings
@@ -245,15 +257,7 @@ ROS_COLUMN_MAPPINGS = {
     ],
 
     # Hayden Winks ROS data (scraped from Underdog Network)
-    'hw': [
-        'PLAYER NAME',
-        'PLAYER ID',
-        'STANDARDIZED NAME',
-        'POS',
-        'POS RANK',
-        'YARDS STAT',
-        'DETAILS'
-    ],
+    'hw': _HW_SCRAPER_COLUMNS,
 
     # FantasyPros ROS data (FantasyPros_ format, header in first row)
     'fp': [
@@ -297,40 +301,10 @@ ROS_COLUMN_MAPPINGS = {
     ],
 
     # HW data for merging (tableDownload.csv)
-    'hw-data': [
-        'PLAYER NAME',
-        'POS',
-        'TEAM',
-        'NOTES',
-        'HPPR RANK',
-        'EXP RANK',
-        'HPPR',
-        'EXP',
-        'DIFF'
-    ],
+    'hw-data': _HW_DATA_COLUMNS,
 
     # FPTS data for merging (fpts-xfp-avg.csv)
-    'fpts-data': [
-        'RK',
-        'PLAYER NAME',
-        'TEAM',
-        'POS',
-        'GP',
-        'FPTS',
-        'XFP',
-        'FPTS_DIFF',  # FPTS - XFP difference
-        'TD',
-        'XTD',
-        'TD_DIFF',  # TD - XTD difference
-        'OPP5',
-        'OPP10',
-        'OPP20',
-        'RUSH',
-        'AIRYDS',
-        'TGT',
-        'EZTGT',
-        'DEEPTGT'
-    ]
+    'fpts-data': _FPTS_DATA_COLUMNS
 }
 
 # File lookup patterns for different league types
@@ -372,6 +346,11 @@ FILE_MAPPINGS = {
 
 # Supported fantasy positions
 SUPPORTED_POSITIONS = ['QB', 'RB', 'WR', 'TE']
+
+# Current NFL season — used for season-specific URLs (HW scraper article slug).
+# NOTE: FILE_MAPPINGS prefixes and fetcher filename defaults still hardcode 2025;
+# fully centralizing the season is tracked as the season-rollover audit in SCRAPER-PLAN.md.
+CURRENT_SEASON = 2025
 
 # Default paths
 DEFAULT_PATHS = {
@@ -452,19 +431,25 @@ def get_ros_file_mappings(week: int) -> dict:
     }
 
 
-def get_hw_scraper_url(week: int = None, league_type: str = 'weekly') -> str:
+def get_hw_scraper_url(week: int = None, league_type: str = 'weekly',
+                       season: int = CURRENT_SEASON) -> str:
     """
     Generate the Underdog Network URL for HW rankings scraper.
 
     Args:
         week (int): Week number for weekly/ROS rankings
         league_type (str): League type ('weekly' or 'ros')
+        season (int): NFL season year used in the article slug (default: CURRENT_SEASON).
+                      Bump CURRENT_SEASON (or pass season) at season rollover.
 
     Returns:
         str: URL for the HW rankings article
     """
     if league_type in ['weekly', 'ros'] and week:
-        # Both weekly and ROS use the same URL pattern with week number
-        return f"https://underdognetwork.com/football/fantasy-rankings/week-{week}-fantasy-football-rankings-the-blueprint-2025"
+        # Both weekly and ROS use the same URL pattern with week number + season
+        return (
+            "https://underdognetwork.com/football/fantasy-rankings/"
+            f"week-{week}-fantasy-football-rankings-the-blueprint-{season}"
+        )
     else:
         raise ValueError(f"Invalid parameters for HW scraper URL: league_type={league_type}, week={week}")

@@ -6,8 +6,7 @@ and weekly_stats_processor.py.
 """
 
 import pandas as pd
-import numpy as np
-from typing import List, Union, Optional, Any
+from typing import List, Union, Any
 
 
 def validate_dataframe(df: pd.DataFrame, required_columns: List[str]) -> bool:

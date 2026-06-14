@@ -1,6 +1,5 @@
 import pytest
 from fantasy_pipeline.core.rankings_processor import RankingsProcessor
-from fantasy_pipeline.config import FILE_MAPPINGS
 
 
 class TestRankingsProcessorInit:

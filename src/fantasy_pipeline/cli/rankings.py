@@ -5,8 +5,134 @@ Fantasy Football Rankings CLI Command
 Process fantasy football rankings from multiple sources.
 """
 
+import argparse
+import os
 import sys
 from fantasy_pipeline import RankingsProcessor
+
+
+def _build_rankings_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the default rankings command."""
+    parser = argparse.ArgumentParser(description='Process fantasy football rankings')
+    parser.add_argument(
+        '--league-type',
+        choices=['redraft', 'bestball', 'weekly', 'ros'],
+        default='redraft',
+        help='Type of league to process (default: redraft)'
+    )
+    parser.add_argument(
+        '--week',
+        type=int,
+        help='Week number for weekly/ROS rankings (required when league-type is weekly or ros)'
+    )
+    parser.add_argument(
+        '--data-path',
+        help='Path to update directory containing ranking files'
+    )
+    parser.add_argument(
+        '--player-key-path',
+        help='Path to player key dictionary JSON file'
+    )
+    parser.add_argument(
+        '--base-data-dir',
+        help='Base directory containing latest, update, archive folders'
+    )
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress verbose output'
+    )
+    return parser
+
+
+def _fetch_adp_command(argv) -> int:
+    """Fetch FantasyPros consensus ADP into the update folder (`ff-rankings fetch-adp`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS
+    from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_adp
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings fetch-adp',
+        description='Fetch FantasyPros consensus ADP and save it to the update folder'
+    )
+    parser.add_argument(
+        '--output',
+        default=DEFAULT_PATHS['update_dir'],
+        help='Directory to save the ADP CSV (default: the pipeline update folder)'
+    )
+    parser.add_argument('--year', type=int, default=2025, help='Season year for the filename')
+    parser.add_argument('--min-players', type=int, default=200,
+                        help='Coverage floor — fail if fewer players parse (default: 200)')
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_fantasypros_adp(ns.output, year=ns.year, min_players=ns.min_players)
+        print(f"\n✅ ADP saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching ADP: {e}")
+        return 1
+
+
+def _fetch_ds_command(argv) -> int:
+    """Fetch DraftSharks half-PPR rankings into the update folder (`ff-rankings fetch-ds`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS
+    from fantasy_pipeline.scraper.fetch_rankings import fetch_draftsharks
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings fetch-ds',
+        description='Fetch DraftSharks half-PPR rankings (headless browser) into the update folder'
+    )
+    parser.add_argument(
+        '--output',
+        default=DEFAULT_PATHS['update_dir'],
+        help='Directory to save the DraftSharks CSV (default: the pipeline update folder)'
+    )
+    parser.add_argument('--min-players', type=int, default=150,
+                        help='Coverage floor — fail if fewer players are captured (default: 150)')
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_draftsharks(ns.output, min_players=ns.min_players)
+        print(f"\n✅ DraftSharks rankings saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching DraftSharks rankings: {e}")
+        return 1
+
+
+def _fetch_fp_command(argv) -> int:
+    """Fetch FantasyPros consensus rankings into the update folder (`ff-rankings fetch-fp`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS
+    from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_rankings
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings fetch-fp',
+        description='Fetch FantasyPros expert consensus rankings into the update folder'
+    )
+    parser.add_argument(
+        '--output',
+        default=DEFAULT_PATHS['update_dir'],
+        help='Directory to save the rankings CSV (default: the pipeline update folder)'
+    )
+    parser.add_argument('--year', type=int, default=2025, help='Season year for the filename')
+    parser.add_argument('--scoring', choices=['ppr', 'half-ppr', 'standard'], default='ppr',
+                        help='Scoring format (default: ppr)')
+    parser.add_argument('--min-players', type=int, default=200,
+                        help='Coverage floor — fail if fewer players parse (default: 200)')
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_fantasypros_rankings(
+            ns.output, year=ns.year, scoring=ns.scoring, min_players=ns.min_players
+        )
+        print(f"\n✅ FantasyPros rankings saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching FantasyPros rankings: {e}")
+        return 1
 
 
 def main(args=None):
@@ -14,42 +140,22 @@ def main(args=None):
     Process fantasy football rankings.
 
     Args:
-        args: Parsed arguments from argparse (if called from main.py)
-              If None, will parse sys.argv directly
+        args: Parsed arguments (if already parsed). If None, parses sys.argv.
+              The `fetch-adp` subcommand is dispatched before rankings parsing.
     """
     # If called standalone, parse arguments
     if args is None:
-        import argparse
-        parser = argparse.ArgumentParser(description='Process fantasy football rankings')
-        parser.add_argument(
-            '--league-type',
-            choices=['redraft', 'bestball', 'weekly', 'ros'],
-            default='redraft',
-            help='Type of league to process (default: redraft)'
-        )
-        parser.add_argument(
-            '--week',
-            type=int,
-            help='Week number for weekly/ROS rankings (required when league-type is weekly or ros)'
-        )
-        parser.add_argument(
-            '--data-path',
-            help='Path to update directory containing ranking files'
-        )
-        parser.add_argument(
-            '--player-key-path',
-            help='Path to player key dictionary JSON file'
-        )
-        parser.add_argument(
-            '--base-data-dir',
-            help='Base directory containing latest, update, archive folders'
-        )
-        parser.add_argument(
-            '--quiet',
-            action='store_true',
-            help='Suppress verbose output'
-        )
-        args = parser.parse_args()
+        argv = sys.argv[1:]
+        # Additive subcommand: `ff-rankings fetch-adp ...` (default flow is unchanged)
+        if argv and argv[0] == 'fetch-adp':
+            return _fetch_adp_command(argv[1:])
+        # Additive subcommand: `ff-rankings fetch-ds ...` (DraftSharks headless fetch)
+        if argv and argv[0] == 'fetch-ds':
+            return _fetch_ds_command(argv[1:])
+        # Additive subcommand: `ff-rankings fetch-fp ...` (FantasyPros consensus rankings)
+        if argv and argv[0] == 'fetch-fp':
+            return _fetch_fp_command(argv[1:])
+        args = _build_rankings_parser().parse_args(argv)
 
     # Validate week parameter for weekly and ROS league types
     if args.league_type in ['weekly', 'ros'] and args.week is None:

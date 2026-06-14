@@ -8,7 +8,7 @@ fantasy point breakdowns and percentages.
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Tuple
+from typing import Dict
 from ..utils import validate_dataframe, safe_numeric_conversion, print_processing_summary
 
 
@@ -101,10 +101,10 @@ def calculate_season_stats(df: pd.DataFrame, verbose: bool = True) -> pd.DataFra
             existing_avg = existing_fpts.mean()
             print(f"   📋 Calculated Half PPR avg: {calculated_avg:.2f}")
             print(f"   📋 Existing {total_fpts_col} avg: {existing_avg:.2f}")
-            print(f"   ✓ Using calculated Half PPR fantasy points")
+            print("   ✓ Using calculated Half PPR fantasy points")
     else:
         if verbose:
-            print(f"   ✓ Created Half PPR fantasy points from component stats")
+            print("   ✓ Created Half PPR fantasy points from component stats")
     
     # Get games played (G column)
     if 'G' in df_processed.columns:
@@ -221,7 +221,7 @@ def _calculate_fantasy_point_percentages(df: pd.DataFrame, verbose: bool) -> Non
 
 def _print_stats_summary(df: pd.DataFrame) -> None:
     """Print summary statistics for the processed data."""
-    print(f"\n📈 Season Stats Summary:")
+    print("\n📈 Season Stats Summary:")
     
     if 'TOTAL_FPTS' in df.columns:
         print(f"   Total fantasy points range: {df['TOTAL_FPTS'].min():.1f} - {df['TOTAL_FPTS'].max():.1f}")
@@ -235,7 +235,7 @@ def _print_stats_summary(df: pd.DataFrame) -> None:
             'TOTAL_FPTS': 'mean',
             'FPTS_PER_GAME': 'mean'
         }).round(1)
-        print(f"   Average stats by position:")
+        print("   Average stats by position:")
         for pos, stats in pos_stats.iterrows():
             print(f"     {pos}: {stats['TOTAL_FPTS']:.1f} total FPTS, {stats['FPTS_PER_GAME']:.1f} FPTS/game")
 
@@ -293,7 +293,7 @@ def validate_season_stats(df: pd.DataFrame, verbose: bool = True) -> Dict[str, b
         validation_results['reasonable_percentages'] = not (total_pcts > 150).any()  # Allow for other scoring
     
     if verbose:
-        print(f"\n✅ Season Stats Validation:")
+        print("\n✅ Season Stats Validation:")
         for check, passed in validation_results.items():
             status = "✓" if passed else "❌"
             print(f"   {status} {check.replace('_', ' ').title()}: {'Passed' if passed else 'Failed'}")

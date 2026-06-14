@@ -192,7 +192,6 @@ fantasy_data_pipeline/
 │       │   ├── hw_scraper.py
 │       │   └── integration.py
 │       ├── cli/                  # Command-line interface
-│       │   ├── main.py
 │       │   ├── rankings.py
 │       │   └── stats.py
 │       ├── config.py             # Configuration

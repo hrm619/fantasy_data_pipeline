@@ -10,10 +10,9 @@ Based on redraft_rankings_processor.py as the source of truth.
 
 import pandas as pd
 import os
-import json
 import shutil
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ..config import (
     COLUMN_MAPPINGS, WEEKLY_COLUMN_MAPPINGS, ROS_COLUMN_MAPPINGS,
@@ -142,7 +141,7 @@ class RankingsProcessor:
             except Exception as e:
                 if verbose:
                     print(f"   ⚠️  HW scraping failed: {e}")
-                    print(f"   Continuing with existing files (if any)...")
+                    print("   Continuing with existing files (if any)...")
 
         # Step 1: Load input files
         files = self._load_input_files(data_path, verbose)
@@ -384,7 +383,7 @@ class RankingsProcessor:
         player_key_dict, player_name_to_key = load_player_key_mapping(player_key_path)
 
         if verbose:
-            print(f"   ✓ Player name to key mapping saved to: data/player_name_to_key.json")
+            print("   ✓ Player name to key mapping saved to: data/player_name_to_key.json")
             print(f"   ✓ Total mappings created: {len(player_name_to_key)}")
 
         # Add PLAYER ID column to each dataframe
@@ -547,7 +546,7 @@ class RankingsProcessor:
             return df_rank
 
         if verbose:
-            print(f"\n📊 Step 7.5: Merging weekly/ROS data...")
+            print("\n📊 Step 7.5: Merging weekly/ROS data...")
 
         # Step 1: Merge hw-data (HPPR, Exp, Diff) first
         if 'hw-data' in dataframes:
@@ -563,7 +562,7 @@ class RankingsProcessor:
 
             if verbose:
                 hw_data_count = df_rank['HPPR'].notna().sum() if 'HPPR' in df_rank.columns else 0
-                print(f"   ✓ Merged HW data (HPPR, EXP, DIFF)")
+                print("   ✓ Merged HW data (HPPR, EXP, DIFF)")
                 print(f"   ✓ {hw_data_count}/{len(df_rank)} players have HW data")
 
         # Step 2: Merge fpts-data (numeric fields only, excluding already present columns)

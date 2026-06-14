@@ -347,9 +347,8 @@ src/
     │   └── integration.py   # HW scraper integration (auto-scraping)
     └── cli/                 # Command-line interface
         ├── __init__.py
-        ├── main.py          # Main CLI entry point
-        ├── rankings.py      # Rankings command
-        └── stats.py         # Stats generation command
+        ├── rankings.py      # Rankings command (ff-rankings entry point)
+        └── stats.py         # Stats generation command (ff-stats entry point)
 
 scripts/
 └── update_player_key.py     # Player key maintenance tools
@@ -410,16 +409,37 @@ The `data` subpackage (`from fantasy_pipeline.data import ...`) exports `load_da
 
 ### Standalone Source Fetchers (`scraper/fetch_rankings.py`)
 
-Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sources with public web tables
-(not yet wired into the CLI — call directly):
-- `fetch_fantasypros_adp(output_dir, year=2025)` — scrapes the FantasyPros overall ADP table (~989 players)
-  → `FantasyPros_{year}_Overall_ADP_Rankings.csv`
-- `fetch_draftsharks(output_dir)` — scrapes DraftShark (only ~60 players render server-side; full list needs JS)
-  → `rankings-half-ppr.csv`
+Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sources with public web tables:
+- `fetch_fantasypros_adp(output_dir, year=2025, min_players=200)` — scrapes the FantasyPros overall ADP
+  table (consensus AVG; ~400 players) and writes the **7-column `COLUMN_MAPPINGS['adp']` schema** directly,
+  so the output drops straight into the pipeline → `FantasyPros_{year}_Overall_ADP_Rankings.csv`.
+  Also exposed as a CLI command: **`ff-rankings fetch-adp [--output DIR] [--year N] [--min-players N]`**
+  (writes to the update folder by default). Per-platform ADP (e.g. Sleeper) is no longer exposed by the
+  public page — only the consensus AVG.
+- `fetch_fantasypros_rankings(output_dir, year=2025, scoring="ppr", min_players=200)` — parses the
+  **embedded `ecrData` JSON** from the FantasyPros cheatsheet page (works year-round; the
+  `/rankings/*-overall.php` table 302-redirects in the offseason) and writes the **8-column
+  `COLUMN_MAPPINGS['fp']` schema** → `FantasyPros_{year}_Draft_ALL_Rankings.csv`. Defaults to PPR;
+  `scoring` ∈ `{ppr, half-ppr, standard}`. CLI: **`ff-rankings fetch-fp [--output DIR] [--year N]
+  [--scoring S] [--min-players N]`**.
+- `fetch_draftsharks(output_dir, min_players=150)` — **headless-browser** fetcher for DraftSharks half-PPR
+  rankings. The page is a JS-rendered SPA (static HTML exposes only ~25 players with no projections), so it
+  uses **Playwright** to drive the page's own client-side **"Export Rankings"** button (`handleExport`, a Blob
+  download) and captures the resulting CSV via `page.expect_download()`. That CSV is the exact 14-column layout
+  the pipeline consumes (renamed positionally into `COLUMN_MAPPINGS['ds']`) → `rankings-half-ppr.csv`.
+  Captures the **full ~558-player board**. Also exposed as a CLI command:
+  **`ff-rankings fetch-ds [--output DIR] [--min-players N]`** (writes to the update folder by default).
+  - **Mobile viewport required**: on the *desktop* viewport the only visible "Export Rankings" control is
+    **gated** (`class="export-button gated" href="/login"`). The ungated export is the `a.mobile-export-button`
+    variant (`@click="handleExport"`), reachable only with a mobile UA + small viewport (390x844). Do **not**
+    use the separate gated "Export Auction Values" button.
+  - **Optional dependency**: Playwright is the `headless` extra. Install with
+    `uv pip install -e ".[headless]"` then `playwright install chromium`. The import is lazy and raises a
+    friendly install hint if missing.
+  - **Coverage floor**: raises if fewer than `min_players` (default 150) rows are captured, and validates the
+    export header to catch layout drift.
 
-See `docs/source_feasibility.md` for which sources are automatable (FantasyPros ADP, in-season FP rankings,
-weekly/ROS HW) vs. paywalled/manual (FantasyPoints, PFF, JJ Patreon, full DraftShark), and
-`docs/manual_source_guide.md` for manual download steps.
+See `SCRAPER-PLAN.md` for the per-source automation roadmap and current status.
 
 ## HW Scraper Integration
 
