@@ -12,7 +12,7 @@ This is a Python pipeline for processing fantasy football rankings from multiple
 
 ## Requirements
 
-- **Python**: 3.10 or higher
+- **Python**: 3.9 or higher (`requires-python = ">=3.9"` in `pyproject.toml`; current package version is `0.3.0`)
 - **Package Manager**: `uv` (recommended) or `pip`
 - **Key Dependencies**: pandas, requests, beautifulsoup4, openpyxl, lxml, rapidfuzz
 - **Data Directory Structure**: The pipeline expects this directory layout:
@@ -81,8 +81,14 @@ uv run ff-stats --season 2024 --min-games 10
 
 ### Testing & Quality
 ```bash
-# Run tests (when test suite exists)
+# Run the full test suite (~29 tests across 3 files)
 pytest
+
+# Run a single test file
+pytest tests/test_rankings_processor.py
+
+# Run a single test
+pytest tests/test_player_utils.py::test_clean_player_names
 
 # Run with coverage
 pytest --cov=src
@@ -96,6 +102,14 @@ ruff check src/ scripts/
 # Type checking
 mypy src/
 ```
+
+**Test layout** (`tests/`): Unit tests only — no integration/pipeline-run tests yet.
+- `test_rankings_processor.py` — RankingsProcessor init, league-type validation, `return_dataframe` API signature
+- `test_data_loader.py` — CSV/Excel loading, README-sheet skipping, header auto-detection, unsupported types
+- `test_player_utils.py` — name cleaning (Jr suffix, special chars), key mapping load, ID assignment, unknown-player handling
+- `tests/conftest.py` provides fixtures: `tmp_csv`, `tmp_csv_with_metadata`, `tmp_excel`, `tmp_excel_with_readme`, `tmp_player_key`, `sample_player_df`
+
+Note: there is no `[tool.pytest]`/`[tool.ruff]`/`[tool.black]`/`[tool.mypy]` config in `pyproject.toml` — all tools run with defaults.
 
 ## Architecture Overview
 
@@ -329,6 +343,7 @@ src/
     ├── scraper/             # Web scraper module
     │   ├── __init__.py
     │   ├── hw_scraper.py    # Web scraping logic and player matching
+    │   ├── fetch_rankings.py # HTTP fetchers for public sources (FantasyPros ADP, DraftShark)
     │   └── integration.py   # HW scraper integration (auto-scraping)
     └── cli/                 # Command-line interface
         ├── __init__.py
@@ -340,9 +355,19 @@ scripts/
 └── update_player_key.py     # Player key maintenance tools
 
 docs/
-├── api/source-library.md    # Complete API reference
-└── development/             # Architecture documentation
+├── api/source-library.md       # Complete API reference
+├── manual_source_guide.md      # How to manually download each ranking source (URLs, logins, filenames)
+├── source_feasibility.md       # Which sources can be auto-fetched vs. require manual download
+└── development/                # Architecture documentation
+
+tests/
+├── conftest.py              # Shared pytest fixtures (temp CSV/Excel/player-key files)
+├── test_rankings_processor.py
+├── test_data_loader.py
+└── test_player_utils.py
 ```
+
+Other top-level docs not in `docs/`: `DATA_SOURCES.md`, `HW_SCRAPER_IMPROVEMENTS.md`, `WEEKLY_RANKINGS_SETUP.md`. Notebooks for exploratory work live in `notebooks/` (`ff-data.ipynb`, `ff-player-key.ipynb`, `ff-rankings.ipynb`).
 
 ## Python Package Usage
 
@@ -367,6 +392,34 @@ from fantasy_pipeline.scraper import auto_scrape_if_needed
 processor = RankingsProcessor('redraft')
 output_file = processor.process_rankings(verbose=True)
 ```
+
+### `return_dataframe` API (quant-edge / fantasy-data integration)
+
+`RankingsProcessor.process_rankings()` accepts `return_dataframe: bool = False`
+(defined in `src/fantasy_pipeline/core/rankings_processor.py`):
+
+- `return_dataframe=False` (default) → writes the consolidated CSV to `latest/` and returns its **path (str)**.
+- `return_dataframe=True` → returns the consolidated **`pandas.DataFrame`** directly without requiring the caller to read a file back.
+
+This is the integration seam consumed by the sibling **`fantasy-data`** repo, which calls
+`RankingsProcessor.process_rankings(return_dataframe=True)` to seed its `players` table. When changing
+output columns or processing behavior, treat this DataFrame as a downstream contract.
+
+The `data` subpackage (`from fantasy_pipeline.data import ...`) exports `load_data`,
+`clean_player_names`, `load_player_key_mapping`, and `add_player_ids`.
+
+### Standalone Source Fetchers (`scraper/fetch_rankings.py`)
+
+Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sources with public web tables
+(not yet wired into the CLI — call directly):
+- `fetch_fantasypros_adp(output_dir, year=2025)` — scrapes the FantasyPros overall ADP table (~989 players)
+  → `FantasyPros_{year}_Overall_ADP_Rankings.csv`
+- `fetch_draftsharks(output_dir)` — scrapes DraftShark (only ~60 players render server-side; full list needs JS)
+  → `rankings-half-ppr.csv`
+
+See `docs/source_feasibility.md` for which sources are automatable (FantasyPros ADP, in-season FP rankings,
+weekly/ROS HW) vs. paywalled/manual (FantasyPoints, PFF, JJ Patreon, full DraftShark), and
+`docs/manual_source_guide.md` for manual download steps.
 
 ## HW Scraper Integration
 
