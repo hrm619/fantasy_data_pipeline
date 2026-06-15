@@ -12,18 +12,19 @@ The remaining three are behind logins/paywalls and were previously "manual by de
 automate them via authenticated browser sessions** (Playwright, same pattern as the DraftSharks
 fetcher) so the whole `update/` folder can be refreshed with one command.
 
-Shared prerequisite: an **auth strategy** — secure handling of the user's credentials (env vars /
-secret store), logged-in Playwright context, and ToS-aware, polite request rates. No credentials in code.
+**Auth strategy (decided & built):** saved-session. `ff-rankings login <source>` opens a headed browser
+for a one-time manual login; the session persists to `~/.fantasy_pipeline/auth/<source>.json` (outside the
+repo) and headless fetchers reuse it via `scraper/auth.load_storage_state`. No passwords in code/env.
 
-- 🔒 **#5 FantasyPoints / Barrett (`fpts`)** — subscription, JS-rendered rankings.
-  - Goal: logged-in Playwright fetch → emit the `COLUMN_MAPPINGS['fpts']` schema → `Scott Barrett*.csv`.
-  - Confirm scoring/format and the exact column layout against a real manual export before building.
-- 🔒 **#6 PFF (`pff`)** — premium subscription; the rankings page has an Export/Download.
-  - Goal: logged-in Playwright fetch → `COLUMN_MAPPINGS['pff']` schema → `Draft-rankings-export.csv`.
-  - Note the second-row-header quirk for weekly/ROS PFF files.
-- 🔒 **#7 JJ Zachariason / LateRound (`jj`)** — Patreon-gated Excel attachment.
+- ⬜ **#5 FantasyPoints / Barrett (`fpts`)** — subscription, JS-rendered rankings. **NEXT.**
+  - Goal: `ff-rankings login fpts` → `ff-rankings fetch-fpts` → `COLUMN_MAPPINGS['fpts']` 7-col schema →
+    `Scott Barrett*.csv`. Real manual export confirmed on disk: `Overall,NAME,POS,TEAM,BYE,TIER,EXODIA`.
+- ✅ **#6 PFF (`pff`)** — saved-session headless export shipped: `ff-rankings login pff` + `ff-rankings
+  fetch-pff`. Live-verified 512 players; structurally identical to the manual export; loads to the exact
+  `COLUMN_MAPPINGS['pff']` width. Fixture + schema-contract + skip-gated live tests.
+- ⬜ **#7 JJ Zachariason / LateRound (`jj`)** — Patreon-gated Excel attachment. Do last (hardest auth).
   - Goal: authenticated Patreon download of the latest `Redraft1QB_*.xlsx` ("Rankings and Tiers" sheet).
-  - Hardest auth (Patreon login + locating the latest post); may stay manual if auth proves too brittle.
+  - Patreon login + locating the latest post; may stay manual if auth proves too brittle.
 
 Acceptance for each: fetched file lands in `update/` and `ff-rankings` consumes it end-to-end
 (no column-count mismatch / player-ID crash), with a coverage floor + a network-free schema test.
@@ -66,3 +67,8 @@ Acceptance for each: fetched file lands in `update/` and `ff-rankings` consumes 
   is now redundant for this case (left in place as a harmless safety net).
 - ⬜ **fantasy-data `test_models.py::test_table_count`** — pre-existing failing test (stale table-count
   assertion), unrelated to the DraftShark sharp reclassification. Verified failing on a clean tree.
+- ⬜ **PFF loader drops the #1 overall player** — `data/loader.load_data` mis-detects the header on the
+  PFF export (title row + blank + real `Overall Rank` header): it skips the real header and consumes the
+  RK=1 row (e.g. Gibbs) as column names, so PFF loses its #1 overall (512 → 511 rows). **Pre-existing** —
+  identical on the manual file and the `fetch-pff` output (surfaced during #6, not caused by it). Fix is a
+  small header-detection tweak in `loader.py` for the title-row case.

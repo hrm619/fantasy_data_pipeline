@@ -399,3 +399,151 @@ def fetch_draftsharks(output_dir: str, min_players: int = 150) -> str:
 
     print(f"DraftSharks fetched: {row_count} players saved to {output_path}")
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# PFF (paywalled — saved-session headless fetcher)
+# ---------------------------------------------------------------------------
+
+PFF_RANKINGS_URL = "https://www.pff.com/fantasy/rankings/draft"
+
+# The 9-col header row inside PFF's "Export"/"Download" CSV (the file the manual
+# workflow already drops as Draft-rankings-export-<year>.csv). The pipeline finds this
+# header row (the file has a title row above it) and renames POSITIONALLY into
+# COLUMN_MAPPINGS['pff'].
+PFF_EXPORT_HEADER = [
+    "Overall Rank", "Full Name", "Team Abbreviation", "Position", "Position Rank",
+    "Bye Week", "ADP", "Projected Points", "Auction Value",
+]
+
+
+def _pff_output_filename(year: int) -> str:
+    """Filename matching FILE_MAPPINGS' 'Draft-rankings-export' prefix."""
+    return f"Draft-rankings-export-{year}.csv"
+
+
+def _click_pff_export(page) -> None:
+    """Click PFF's rankings Export/Download control.
+
+    PFF's exact selector isn't knowable without a logged-in DOM, so this tries the
+    common patterns in order (role/text). Adjust here if the live page differs —
+    keep the candidates list as the single place selectors live.
+    """
+    candidates = [
+        lambda: page.get_by_role("button", name=re.compile(r"export", re.I)),
+        lambda: page.get_by_role("link", name=re.compile(r"export", re.I)),
+        lambda: page.get_by_role("button", name=re.compile(r"download", re.I)),
+        lambda: page.get_by_text(re.compile(r"^\s*export\s*$", re.I)),
+    ]
+    last_exc = None
+    for make in candidates:
+        try:
+            loc = make().first
+            loc.wait_for(state="visible", timeout=8000)
+            loc.click()
+            return
+        except Exception as exc:  # selector not present / not clickable — try next
+            last_exc = exc
+            continue
+    raise RuntimeError(
+        "Could not find PFF's Export/Download control. The page layout may have "
+        f"changed — update _click_pff_export selectors. Last error: {last_exc}"
+    )
+
+
+def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
+    """Drive a logged-in headless browser to export PFF rankings; save the CSV.
+
+    Reuses the saved session (`storage_state`) so no password is handled here.
+    Returns the number of data rows written (rows after the 'Overall Rank' header).
+    """
+    sync_playwright = _require_playwright()
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # browser binary missing
+            raise RuntimeError(
+                "Could not launch Chromium. Install the browser with:\n"
+                "  playwright install chromium"
+            ) from exc
+        try:
+            context = browser.new_context(
+                accept_downloads=True,
+                storage_state=storage_state,
+            )
+            page = context.new_page()
+            page.goto(PFF_RANKINGS_URL, wait_until="domcontentloaded", timeout=60000)
+
+            with page.expect_download(timeout=30000) as download_info:
+                _click_pff_export(page)
+            download = download_info.value
+            download.save_as(output_path)
+        finally:
+            browser.close()
+
+    return _validate_pff_csv(output_path)
+
+
+def _validate_pff_csv(output_path: str) -> int:
+    """Validate the saved PFF CSV's header and return its data-row count.
+
+    The export carries a title row above the real header, so we locate the
+    'Overall Rank' row and validate the 9 columns there.
+    """
+    with open(output_path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        raise RuntimeError("PFF export produced an empty CSV")
+
+    header_idx = next(
+        (i for i, r in enumerate(rows) if r and r[0].strip() == "Overall Rank"),
+        None,
+    )
+    if header_idx is None:
+        raise RuntimeError(
+            "PFF export missing the 'Overall Rank' header row — not logged in, "
+            "or the export layout changed"
+        )
+    header = [h.strip() for h in rows[header_idx]]
+    if header != PFF_EXPORT_HEADER:
+        raise RuntimeError(
+            f"PFF export header changed — expected {PFF_EXPORT_HEADER}, got {header}"
+        )
+    data_rows = [r for r in rows[header_idx + 1:] if r and r[0].strip()]
+    return len(data_rows)
+
+
+def fetch_pff(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 200) -> str:
+    """Fetch PFF draft rankings via a saved logged-in session and save a CSV.
+
+    PFF's rankings are behind a premium subscription. This reuses the session saved by
+    `ff-rankings login pff` (no password handled here) to drive the page's own
+    Export/Download, capturing the exact CSV the pipeline already consumes
+    (renamed positionally into COLUMN_MAPPINGS['pff']) → Draft-rankings-export-<year>.csv.
+
+    Args:
+        output_dir: Directory to save the CSV (the pipeline's update/ folder).
+        year: Season year for the filename (matches FILE_MAPPINGS' pff prefix).
+        min_players: Coverage floor — raise if fewer rows are captured.
+
+    Returns:
+        Path to the saved CSV file.
+
+    Raises:
+        RuntimeError: if there is no saved session, Playwright/Chromium is unavailable,
+            the export header drifts, or fewer than `min_players` rows are captured.
+    """
+    from fantasy_pipeline.scraper.auth import load_storage_state
+
+    storage_state = load_storage_state("pff")
+    output_path = os.path.join(output_dir, _pff_output_filename(year))
+    row_count = _pff_capture_export_csv(output_path, storage_state)
+
+    if row_count < min_players:
+        raise RuntimeError(
+            f"Only {row_count} PFF players captured (expected >= {min_players}); "
+            "the session may have expired or the export may be gated"
+        )
+
+    print(f"PFF fetched: {row_count} players saved to {output_path}")
+    return output_path

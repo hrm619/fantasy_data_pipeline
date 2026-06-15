@@ -41,12 +41,13 @@ Prefix of the filename must match `FILE_MAPPINGS[<league>][<key>]`.
 2. ✅ DraftShark (`ds`) — headless Playwright fetcher shipped (`ff-rankings fetch-ds`); reclassified sharp in fantasy-data
 3. ✅ Hayden Winks (`hw`) — weekly/ROS automated + hardened (season param, fail-loud guard); redraft manual by design
 4. ✅ FantasyPros rankings (`fp`) — shipped via embedded `ecrData` JSON (`ff-rankings fetch-fp`); works year-round
-5. 🔒 FantasyPoints / Barrett (`fpts`) — paywall, manual by design
-6. 🔒 PFF (`pff`) — paywall, manual by design
-7. 🔒 JJ Zachariason (`jj`) — Patreon, manual by design
+5. ⬜ FantasyPoints / Barrett (`fpts`) — paywall; saved-session automation next (pattern proven by pff)
+6. ✅ PFF (`pff`) — saved-session headless export shipped (`ff-rankings fetch-pff`); live-verified 512 players
+7. ⬜ JJ Zachariason (`jj`) — Patreon; saved-session automation (hardest auth; do last)
 
-**All automatable sources are done.** Remaining open items are cross-cutting (season-rollover audit;
-doc reconciliation) and verifying the manual-source guide for #5–#7.
+**Free/public sources + PFF are done.** The saved-session auth pattern (`scraper/auth.py` +
+`ff-rankings login`) is now established and reusable for `fpts` and `jj`. Remaining: automate #5/#7,
+plus the cross-cutting doc reconciliation already largely complete.
 
 ---
 
@@ -61,6 +62,10 @@ Status: ✅ (built across sources #1–#4)
 - ✅ **Network-free tests** — fixture/JSON-string based parser tests for each fetcher; the DraftSharks live
   browser test is skip-gated when Chromium is unavailable, so CI stays green.
 - ✅ **Coverage sanity check** — every fetcher has a `min_players` floor that raises on layout drift.
+- ✅ **Saved-session auth** (`scraper/auth.py`) — `ff-rankings login <source>` opens a headed browser for a
+  one-time manual login and persists the session to `~/.fantasy_pipeline/auth/<source>.json` (outside the
+  repo). Headless fetchers reuse it via `load_storage_state(source)`; no passwords stored/handled. Built
+  for the paywalled sources (#5–#7); proven by `pff`.
 - 🟡 **Harden `_TableParser`** — still used only by the ADP fetcher (fp uses JSON, ds uses Playwright). The
   text-node fusion edge case hasn't bitten ADP in practice; left as-is. Revisit only if ADP names break.
 
@@ -225,11 +230,29 @@ works now and is far more robust than HTML parsing.
 ---
 
 ## 6. PFF — `pff`
-**Status:** 🔒 manual (by design)
-**URL:** `pff.com/fantasy/rankings/draft` (premium subscription)
+**Status:** ✅ shipped & live-verified (2026-06-15) via saved-session headless fetch
+**Code:** `fetch_rankings.fetch_pff` · CLI `ff-rankings fetch-pff` · **URL:** `pff.com/fantasy/rankings/draft`
 
-- Requires PFF subscription; export is the only path. **Keep manual** (`Draft-rankings-export.csv`).
-- ⬜ Verify manual guide accuracy (filename, second-row-header quirk for weekly/ROS).
+### Implemented (saved-session + Playwright)
+- **Auth:** one-time `ff-rankings login pff` opens a headed browser; the session (cookies/localStorage)
+  is persisted to `~/.fantasy_pipeline/auth/pff.json` (outside the repo — see `scraper/auth.py`). No
+  password is ever stored or handled in code. `fetch_pff` reuses that session headlessly.
+- **Fetch:** drives the rankings page's own Export/Download (`_click_pff_export` tries role/text
+  selector variants; isolated in one place for easy adjustment) and captures the CSV via
+  `page.expect_download()`.
+- **Output:** `Draft-rankings-export-<CURRENT_SEASON>.csv` in `update/` (matches `FILE_MAPPINGS` pff prefix).
+- **Live result:** captured **512 players** — structurally identical (header + 9 cols + row count) to the
+  on-disk manual export; loads through `data/loader` to the exact `COLUMN_MAPPINGS['pff']` width.
+- **Hardening:** `_validate_pff_csv` locates the `Overall Rank` header (the export has a title row above
+  it), validates the 9 columns, and counts data rows; `min_players=200` coverage floor.
+- **Tests:** `tests/test_fetch_pff.py` (fixture-based validation + schema-contract guard) and a live
+  end-to-end test gated to **skip without Chromium + a saved session** (CI stays green).
+
+### ⚠️ Pre-existing loader bug surfaced (not introduced here, not PFF-specific to the fetch)
+- `data/loader.load_data` mis-detects the header on the PFF export (title row + blank + real header):
+  it skips the `Overall Rank` row and consumes the **RK=1 player (Gibbs)** as the header, so PFF's #1
+  overall is silently dropped (512 → 511 rows). **Identical on the manual file** — the fetcher faithfully
+  reproduces the manual input. Tracked as a known issue in `TODO.md`; fix is a small loader follow-up.
 
 ---
 

@@ -38,21 +38,24 @@ must start with the prefix shown below. Season-specific prefixes derive from `CU
 
 ---
 
-## Manual Sources (paywalled — automation tracked as TODO #5–#7)
+### PFF (pff) — ✅ now automated via saved session
+- **One-time login:** `ff-rankings login pff` (opens a browser; session saved to
+  `~/.fantasy_pipeline/auth/pff.json`, outside the repo).
+- **Fetch:** `ff-rankings fetch-pff` (reuses the saved session headlessly; writes to `update/`).
+- **Filename:** `Draft-rankings-export-2025.csv` · **Columns:** `Overall Rank, Full Name,
+  Team Abbreviation, Position, Position Rank, Bye Week, ADP, Projected Points, Auction Value`.
+- **Manual fallback:** https://www.pff.com/fantasy/rankings/draft → Export/Download (subscription required).
+- **Note (weekly/ROS):** the PFF export has a title row above the real header — the loader handles it.
+
+---
+
+## Manual Sources (paywalled — automation tracked as TODO #5, #7)
 
 ### FantasyPoints / Barrett (fpts)
 - **URL:** https://www.fantasypoints.com/nfl/rankings/half-ppr (subscription required)
 - **Export:** Navigate to the rankings page → export/download CSV.
 - **Filename:** Must start with `Scott Barrett` (e.g., `Scott Barrett 2025 Rankings.csv`)
 - **Columns expected (redraft):** `RK, PLAYER NAME, POS, TEAM, BYE, TIER, EXODIA` (`COLUMN_MAPPINGS['fpts']`).
-
-### PFF (pff)
-- **URL:** https://www.pff.com/fantasy/rankings/draft (PFF premium subscription required)
-- **Export:** Click "Export"/"Download" on the rankings page.
-- **Filename:** `Draft-rankings-export.csv`
-- **Columns expected (redraft):** `RK, PLAYER NAME, TEAM, POS, POS RANK, BYE, PFF ADP, PROJ, AUCTION`.
-- **Note:** For **weekly/ROS** PFF exports the header is in the **second row** — the loader handles this
-  (`data/loader.py`), but keep the exported file's two-row header intact.
 
 ### JJ Zachariason / LateRound (jj)
 - **URL:** https://www.patreon.com/posts/ (latest ranking post; subscription required)

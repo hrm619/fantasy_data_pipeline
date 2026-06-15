@@ -438,6 +438,23 @@ Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sou
     friendly install hint if missing.
   - **Coverage floor**: raises if fewer than `min_players` (default 150) rows are captured, and validates the
     export header to catch layout drift.
+- `fetch_pff(output_dir, year=CURRENT_SEASON, min_players=200)` — **saved-session** headless fetcher for the
+  paywalled PFF draft rankings. Reuses a persisted login session (see below) to drive the rankings page's own
+  Export/Download and capture the CSV → `Draft-rankings-export-<year>.csv`, the exact `COLUMN_MAPPINGS['pff']`
+  9-col layout the pipeline already consumes. CLI: **`ff-rankings fetch-pff [--output DIR] [--year N]
+  [--min-players N]`**. Validates the `Overall Rank` header (the export has a title row above it) + coverage floor.
+
+### Saved-session auth for paywalled sources (`scraper/auth.py`)
+
+Paywalled sources (PFF now; FantasyPoints/JJ planned) use a **saved-session** strategy — no passwords in
+code or env:
+- **`ff-rankings login <source>`** (`{pff, fpts, jj}`) opens a **headed** browser for a one-time manual
+  login (2FA/SSO/OAuth all fine). On Enter, the browser context's cookies/localStorage ("storage state")
+  persist to `~/.fantasy_pipeline/auth/<source>.json` — **outside the repo**, so there is nothing to gitignore.
+- Headless fetchers call `load_storage_state(source)` (raises a friendly "run `ff-rankings login <source>`"
+  if absent) and pass it to `browser.new_context(storage_state=...)`.
+- Override the secrets dir with `FANTASY_PIPELINE_AUTH_DIR`. Re-run `login` when a session expires.
+- Live fetch tests are **skip-gated** on Chromium + a saved session, so CI stays green.
 
 See `SCRAPER-PLAN.md` for the per-source automation roadmap and current status.
 
