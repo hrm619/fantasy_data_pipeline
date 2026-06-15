@@ -16,13 +16,14 @@ fetcher) so the whole `update/` folder can be refreshed with one command.
 for a one-time manual login; the session persists to `~/.fantasy_pipeline/auth/<source>.json` (outside the
 repo) and headless fetchers reuse it via `scraper/auth.load_storage_state`. No passwords in code/env.
 
-- ⬜ **#5 FantasyPoints / Barrett (`fpts`)** — subscription, JS-rendered rankings. **NEXT.**
-  - Goal: `ff-rankings login fpts` → `ff-rankings fetch-fpts` → `COLUMN_MAPPINGS['fpts']` 7-col schema →
-    `Scott Barrett*.csv`. Real manual export confirmed on disk: `Overall,NAME,POS,TEAM,BYE,TIER,EXODIA`.
+- ✅ **#5 FantasyPoints / Barrett (`fpts`)** — saved-session export shipped: `ff-rankings login fpts` +
+  `ff-rankings fetch-fpts`. Live-verified 99 players; exact 7-col `COLUMN_MAPPINGS['fpts']` schema. Flow:
+  redraft SPA → click "BARRETT'S RANKINGS" tab (title-switch guard) → "Download as CSV". `--url` override
+  for re-verification. Fixture + schema-contract + skip-gated live tests.
 - ✅ **#6 PFF (`pff`)** — saved-session headless export shipped: `ff-rankings login pff` + `ff-rankings
   fetch-pff`. Live-verified 512 players; structurally identical to the manual export; loads to the exact
   `COLUMN_MAPPINGS['pff']` width. Fixture + schema-contract + skip-gated live tests.
-- ⬜ **#7 JJ Zachariason / LateRound (`jj`)** — Patreon-gated Excel attachment. Do last (hardest auth).
+- ⬜ **#7 JJ Zachariason / LateRound (`jj`)** — Patreon-gated Excel attachment. **NEXT** (hardest auth).
   - Goal: authenticated Patreon download of the latest `Redraft1QB_*.xlsx` ("Rankings and Tiers" sheet).
   - Patreon login + locating the latest post; may stay manual if auth proves too brittle.
 

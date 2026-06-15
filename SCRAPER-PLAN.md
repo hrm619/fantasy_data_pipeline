@@ -41,13 +41,12 @@ Prefix of the filename must match `FILE_MAPPINGS[<league>][<key>]`.
 2. ✅ DraftShark (`ds`) — headless Playwright fetcher shipped (`ff-rankings fetch-ds`); reclassified sharp in fantasy-data
 3. ✅ Hayden Winks (`hw`) — weekly/ROS automated + hardened (season param, fail-loud guard); redraft manual by design
 4. ✅ FantasyPros rankings (`fp`) — shipped via embedded `ecrData` JSON (`ff-rankings fetch-fp`); works year-round
-5. ⬜ FantasyPoints / Barrett (`fpts`) — paywall; saved-session automation next (pattern proven by pff)
+5. ✅ FantasyPoints / Barrett (`fpts`) — saved-session export shipped (`ff-rankings fetch-fpts`); live-verified 99 players
 6. ✅ PFF (`pff`) — saved-session headless export shipped (`ff-rankings fetch-pff`); live-verified 512 players
 7. ⬜ JJ Zachariason (`jj`) — Patreon; saved-session automation (hardest auth; do last)
 
-**Free/public sources + PFF are done.** The saved-session auth pattern (`scraper/auth.py` +
-`ff-rankings login`) is now established and reusable for `fpts` and `jj`. Remaining: automate #5/#7,
-plus the cross-cutting doc reconciliation already largely complete.
+**Everything except JJ (#7) is done.** The saved-session auth pattern (`scraper/auth.py` +
+`ff-rankings login`) is established and reusable. Remaining: automate #7 (Patreon — hardest auth).
 
 ---
 
@@ -221,11 +220,25 @@ works now and is far more robust than HTML parsing.
 ---
 
 ## 5. FantasyPoints / Barrett — `fpts`
-**Status:** 🔒 manual (by design)
-**URL:** `fantasypoints.com/nfl/rankings/...` (subscription, JS-rendered)
+**Status:** ✅ shipped & live-verified (2026-06-15) via saved-session headless fetch
+**Code:** `fetch_rankings.fetch_fpts` · CLI `ff-rankings fetch-fpts` · **URL:** `fantasypoints.com/nfl/rankings/redraft`
 
-- Paywalled + JS-rendered; no public endpoint found. **Keep manual** (`Scott Barrett*.csv`).
-- ⬜ Verify the manual guide lists the correct filename prefix(es) and column expectations.
+### Implemented (saved-session + Playwright)
+- **Auth:** reuses the shared saved-session pattern — `ff-rankings login fpts` → `~/.fantasy_pipeline/auth/fpts.json`.
+- **Flow (discovered live):** the redraft rankings SPA defaults to Hansen's board; `_select_fpts_barrett`
+  clicks the **"BARRETT'S RANKINGS"** tab (and asserts the page title switches to Barrett's, so we never
+  silently export Hansen's), then `_click_fpts_csv_download` clicks the DataTables **"Download as CSV"**
+  button (`button.buttons-csv`), captured via `page.expect_download()`.
+- **Output:** `Scott Barrett <year> Redraft Rankings.csv` in `update/` (matches `FILE_MAPPINGS` 'Scott Barrett' prefix).
+- **Live result:** **99 players**, exact 7-col header (`Overall,NAME,POS,TEAM,BYE,TIER,EXODIA`); loads
+  through `data/loader` to the exact `COLUMN_MAPPINGS['fpts']` width (no off-by-one — header is row 1).
+- **Hardening:** `_validate_fpts_csv` asserts the 7-col header; `min_players=90` floor (board is ~100).
+  `--url` flag overrides the rankings page for future live re-verification.
+- **Tests:** `tests/test_fetch_fpts.py` (fixture validation + schema-contract guard) + a skip-gated live test.
+
+### URL note
+`/nfl/rankings/draft`, `/half-ppr`, `/ppr/overall` all return a 404/maintenance shell; the working redraft
+page is `/nfl/rankings/redraft` (an SPA at `#/`). `/nfl/rankings/redraft` + the Barrett tab is the path.
 
 ---
 

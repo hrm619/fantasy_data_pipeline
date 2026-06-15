@@ -38,6 +38,14 @@ must start with the prefix shown below. Season-specific prefixes derive from `CU
 
 ---
 
+### FantasyPoints / Barrett (fpts) — ✅ now automated via saved session
+- **One-time login:** `ff-rankings login fpts` (session saved to `~/.fantasy_pipeline/auth/fpts.json`).
+- **Fetch:** `ff-rankings fetch-fpts` (selects Barrett's redraft board, clicks "Download as CSV").
+- **Filename:** `Scott Barrett <year> Redraft Rankings.csv` (matches the `Scott Barrett` prefix).
+- **Columns:** `Overall, NAME, POS, TEAM, BYE, TIER, EXODIA` (~100 players).
+- **Manual fallback:** https://www.fantasypoints.com/nfl/rankings/redraft → "BARRETT'S RANKINGS" tab →
+  "Download as CSV" (subscription required).
+
 ### PFF (pff) — ✅ now automated via saved session
 - **One-time login:** `ff-rankings login pff` (opens a browser; session saved to
   `~/.fantasy_pipeline/auth/pff.json`, outside the repo).
@@ -49,13 +57,7 @@ must start with the prefix shown below. Season-specific prefixes derive from `CU
 
 ---
 
-## Manual Sources (paywalled — automation tracked as TODO #5, #7)
-
-### FantasyPoints / Barrett (fpts)
-- **URL:** https://www.fantasypoints.com/nfl/rankings/half-ppr (subscription required)
-- **Export:** Navigate to the rankings page → export/download CSV.
-- **Filename:** Must start with `Scott Barrett` (e.g., `Scott Barrett 2025 Rankings.csv`)
-- **Columns expected (redraft):** `RK, PLAYER NAME, POS, TEAM, BYE, TIER, EXODIA` (`COLUMN_MAPPINGS['fpts']`).
+## Manual Sources (paywalled — automation tracked as TODO #7)
 
 ### JJ Zachariason / LateRound (jj)
 - **URL:** https://www.patreon.com/posts/ (latest ranking post; subscription required)

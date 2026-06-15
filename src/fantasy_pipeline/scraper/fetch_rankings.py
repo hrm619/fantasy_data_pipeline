@@ -547,3 +547,142 @@ def fetch_pff(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 20
 
     print(f"PFF fetched: {row_count} players saved to {output_path}")
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# FantasyPoints / Scott Barrett (paywalled — saved-session headless fetcher)
+# ---------------------------------------------------------------------------
+
+# Redraft rankings SPA. The page defaults to Hansen's rankings; a "BARRETT'S RANKINGS"
+# tab switches to Scott Barrett's board (the one the manual workflow uses). Overridable
+# via --url for live verification.
+FPTS_RANKINGS_URL = "https://www.fantasypoints.com/nfl/rankings/redraft"
+
+# The 7-col header FantasyPoints' "Download as CSV" emits (the file the manual workflow
+# drops as "Scott Barrett*.csv"). The pipeline renames POSITIONALLY into COLUMN_MAPPINGS['fpts'].
+FPTS_EXPORT_HEADER = ["Overall", "NAME", "POS", "TEAM", "BYE", "TIER", "EXODIA"]
+
+
+def _fpts_output_filename(year: int) -> str:
+    """Filename matching FILE_MAPPINGS' 'Scott Barrett' prefix."""
+    return f"Scott Barrett {year} Redraft Rankings.csv"
+
+
+def _select_fpts_barrett(page) -> None:
+    """Switch the redraft rankings SPA from Hansen's board to Scott Barrett's.
+
+    The page loads Hansen's rankings by default; clicking the "BARRETT'S RANKINGS" tab
+    re-renders the table with Barrett's data (page title gains "Barrett's").
+    """
+    tab = page.locator("a:has-text(\"BARRETT'S RANKINGS\")").first
+    tab.wait_for(state="visible", timeout=20000)
+    tab.click()
+    # Confirm the board actually switched before exporting (guards against silently
+    # downloading Hansen's rankings under the Barrett filename).
+    try:
+        page.wait_for_function(
+            "() => /barrett/i.test(document.title)", timeout=15000
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Clicked 'BARRETT'S RANKINGS' but the page title never switched to Barrett's "
+            "board — the rankings SPA may have changed."
+        ) from exc
+
+
+def _click_fpts_csv_download(page) -> None:
+    """Click the DataTables 'Download as CSV' button (fires a client-side Blob download)."""
+    btn = page.locator("button.buttons-csv, button:has-text('Download as CSV')").first
+    btn.wait_for(state="visible", timeout=15000)
+    btn.click()
+
+
+def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url: str) -> int:
+    """Drive a logged-in headless browser to export Barrett's rankings; save the CSV.
+
+    Reuses the saved session (`storage_state`); no password handled here. Selects
+    Barrett's board, then captures its "Download as CSV". Returns the data-row count.
+    """
+    sync_playwright = _require_playwright()
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # browser binary missing
+            raise RuntimeError(
+                "Could not launch Chromium. Install the browser with:\n"
+                "  playwright install chromium"
+            ) from exc
+        try:
+            context = browser.new_context(
+                accept_downloads=True,
+                storage_state=storage_state,
+                viewport={"width": 1400, "height": 1000},
+            )
+            page = context.new_page()
+            page.goto(rankings_url, wait_until="networkidle", timeout=60000)
+
+            _select_fpts_barrett(page)
+            with page.expect_download(timeout=30000) as download_info:
+                _click_fpts_csv_download(page)
+            download = download_info.value
+            download.save_as(output_path)
+        finally:
+            browser.close()
+
+    return _validate_fpts_csv(output_path)
+
+
+def _validate_fpts_csv(output_path: str) -> int:
+    """Validate the saved FantasyPoints CSV header (row 1) and return its data-row count."""
+    with open(output_path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        raise RuntimeError("FantasyPoints export produced an empty CSV")
+
+    header = [h.strip() for h in rows[0]]
+    if header != FPTS_EXPORT_HEADER:
+        raise RuntimeError(
+            f"FantasyPoints export header changed — expected {FPTS_EXPORT_HEADER}, got {header}. "
+            "Not logged in, wrong page, or the export layout changed."
+        )
+    data_rows = [r for r in rows[1:] if r and r[0].strip()]
+    return len(data_rows)
+
+
+def fetch_fpts(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 90,
+               rankings_url: str = FPTS_RANKINGS_URL) -> str:
+    """Fetch FantasyPoints (Scott Barrett) redraft rankings via a saved session; save a CSV.
+
+    FantasyPoints is behind a subscription. This reuses the session saved by
+    `ff-rankings login fpts` (no password handled here) to drive the page's own
+    Export/Download, capturing the CSV the pipeline already consumes (renamed positionally
+    into COLUMN_MAPPINGS['fpts']) → "Scott Barrett <year> Redraft Rankings.csv".
+
+    Args:
+        output_dir: Directory to save the CSV (the pipeline's update/ folder).
+        year: Season year for the filename.
+        min_players: Coverage floor — raise if fewer rows are captured (the redraft
+            board is ~100, so the default 90 catches breakage with a little margin).
+        rankings_url: Rankings page to export from (overridable for live verification).
+
+    Returns:
+        Path to the saved CSV file.
+
+    Raises:
+        RuntimeError: if there is no saved session, Playwright/Chromium is unavailable,
+            the export header drifts, or fewer than `min_players` rows are captured.
+    """
+    from fantasy_pipeline.scraper.auth import load_storage_state
+
+    storage_state = load_storage_state("fpts")
+    output_path = os.path.join(output_dir, _fpts_output_filename(year))
+    row_count = _fpts_capture_export_csv(output_path, storage_state, rankings_url)
+
+    if row_count < min_players:
+        raise RuntimeError(
+            f"Only {row_count} FantasyPoints players captured (expected >= {min_players}); "
+            "the session may have expired or the export may be gated"
+        )
+
+    print(f"FantasyPoints fetched: {row_count} players saved to {output_path}")
+    return output_path

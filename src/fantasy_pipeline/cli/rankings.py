@@ -164,6 +164,37 @@ def _fetch_pff_command(argv) -> int:
         return 1
 
 
+def _fetch_fpts_command(argv) -> int:
+    """Fetch FantasyPoints (Scott Barrett) rankings into the update folder (`ff-rankings fetch-fpts`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
+    from fantasy_pipeline.scraper.fetch_rankings import fetch_fpts, FPTS_RANKINGS_URL
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings fetch-fpts',
+        description='Fetch FantasyPoints (Scott Barrett) rankings (saved session) into the update folder'
+    )
+    parser.add_argument(
+        '--output',
+        default=DEFAULT_PATHS['update_dir'],
+        help='Directory to save the FantasyPoints CSV (default: the pipeline update folder)'
+    )
+    parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
+    parser.add_argument('--min-players', type=int, default=90,
+                        help='Coverage floor — fail if fewer players are captured (default: 90)')
+    parser.add_argument('--url', default=FPTS_RANKINGS_URL,
+                        help='Rankings page to export from (override for live verification)')
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_fpts(ns.output, year=ns.year, min_players=ns.min_players, rankings_url=ns.url)
+        print(f"\n✅ FantasyPoints rankings saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching FantasyPoints rankings: {e}")
+        return 1
+
+
 def _login_command(argv) -> int:
     """Interactive one-time login that persists a session (`ff-rankings login <source>`)."""
     from fantasy_pipeline.scraper.auth import login, SOURCE_LOGIN_URLS
@@ -212,6 +243,9 @@ def main(args=None):
         # Additive subcommand: `ff-rankings fetch-pff ...` (PFF draft rankings export)
         if argv and argv[0] == 'fetch-pff':
             return _fetch_pff_command(argv[1:])
+        # Additive subcommand: `ff-rankings fetch-fpts ...` (FantasyPoints/Scott Barrett export)
+        if argv and argv[0] == 'fetch-fpts':
+            return _fetch_fpts_command(argv[1:])
         args = _build_rankings_parser().parse_args(argv)
 
     # Validate week parameter for weekly and ROS league types

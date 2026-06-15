@@ -443,11 +443,18 @@ Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sou
   Export/Download and capture the CSV → `Draft-rankings-export-<year>.csv`, the exact `COLUMN_MAPPINGS['pff']`
   9-col layout the pipeline already consumes. CLI: **`ff-rankings fetch-pff [--output DIR] [--year N]
   [--min-players N]`**. Validates the `Overall Rank` header (the export has a title row above it) + coverage floor.
+- `fetch_fpts(output_dir, year=CURRENT_SEASON, min_players=90, rankings_url=FPTS_RANKINGS_URL)` —
+  **saved-session** headless fetcher for the paywalled FantasyPoints (Scott Barrett) redraft rankings. The
+  redraft page (`/nfl/rankings/redraft`) is an SPA defaulting to Hansen's board; the fetcher clicks the
+  **"BARRETT'S RANKINGS"** tab (asserting the title switches, so it never exports Hansen's by mistake), then
+  the DataTables **"Download as CSV"** button → `Scott Barrett <year> Redraft Rankings.csv` (exact 7-col
+  `COLUMN_MAPPINGS['fpts']`). CLI: **`ff-rankings fetch-fpts [--output DIR] [--year N] [--min-players N]
+  [--url URL]`** (`--url` overrides the rankings page for live re-verification).
 
 ### Saved-session auth for paywalled sources (`scraper/auth.py`)
 
-Paywalled sources (PFF now; FantasyPoints/JJ planned) use a **saved-session** strategy — no passwords in
-code or env:
+Paywalled sources (PFF + FantasyPoints done; JJ/Patreon planned) use a **saved-session** strategy — no
+passwords in code or env:
 - **`ff-rankings login <source>`** (`{pff, fpts, jj}`) opens a **headed** browser for a one-time manual
   login (2FA/SSO/OAuth all fine). On Enter, the browser context's cookies/localStorage ("storage state")
   persist to `~/.fantasy_pipeline/auth/<source>.json` — **outside the repo**, so there is nothing to gitignore.
