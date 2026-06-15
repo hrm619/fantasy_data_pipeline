@@ -245,8 +245,10 @@ works now and is far more robust than HTML parsing.
 ## Cross-cutting cleanup (track separately)
 - ⬜ Reconcile `docs/auto-ranking-refresh-assessment/` with reality (remove the nonexistent
   `ff-rankings fetch-adp` claim until built; fix "989 players" → current count; mark DS status).
-- ⬜ Season-rollover audit: `2025` is hardcoded across `FILE_MAPPINGS`, `get_hw_scraper_url`, and fetch
-  filenames. Centralize the season constant.
+- ✅ Season-rollover audit (2026-06-15): `CURRENT_SEASON` in `config.py` is now the single source of
+  truth — `FILE_MAPPINGS` `fp`/`adp` prefixes + ROS `fpts` pattern, both fetcher `year` defaults, the
+  CLI `--year` defaults, and `get_hw_scraper_url`'s slug all derive from it. Byte-identical at 2025;
+  guarded by `tests/test_config.py`. Bumping to 2026 is a one-line change (do it when 2026 source files land).
 
 ---
 

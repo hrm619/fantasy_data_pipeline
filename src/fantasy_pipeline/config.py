@@ -307,20 +307,28 @@ ROS_COLUMN_MAPPINGS = {
     'fpts-data': _FPTS_DATA_COLUMNS
 }
 
+# Current NFL season — the single source of truth for season-specific filenames and URLs.
+# Bump this one constant at season rollover and it propagates to:
+#   - FILE_MAPPINGS 'fp'/'adp' prefixes and the ROS 'fpts' file pattern (below)
+#   - the fetcher filename defaults (fetch_rankings.py imports it as the `year` default)
+#   - the CLI `--year` defaults (cli/rankings.py)
+#   - the HW scraper article slug (get_hw_scraper_url's `season` default)
+CURRENT_SEASON = 2025
+
 # File lookup patterns for different league types
 FILE_MAPPINGS = {
     'redraft': {
         "fpts": "Scott Barrett",
-        "fp": "FantasyPros_2025_Draft_ALL_Rankings", 
+        "fp": f"FantasyPros_{CURRENT_SEASON}_Draft_ALL_Rankings",
         "jj": "Redraft1QB_",
         "ds": "rankings-half-ppr",
         "hw": "tableDownload",
         "pff": "Draft-rankings-export",
-        "adp": "FantasyPros_2025_Overall_ADP_Rankings"
+        "adp": f"FantasyPros_{CURRENT_SEASON}_Overall_ADP_Rankings"
     },
     'bestball': {
         "fpts": "Scott Barrett",
-        "fp": "FantasyPros_2025_Draft_ALL_Rankings", 
+        "fp": f"FantasyPros_{CURRENT_SEASON}_Draft_ALL_Rankings",
         "jj": "1QBRankings_",
         "ds": "rankings-half-ppr",
         "hw": "tableDownload",
@@ -332,7 +340,7 @@ FILE_MAPPINGS = {
         # This placeholder ensures 'weekly' is recognized as a valid league type
     },
     'ros': {
-        "fpts": ["2025"],  # Multiple files: QB and WR/RB/TE
+        "fpts": [str(CURRENT_SEASON)],  # Multiple files: QB and WR/RB/TE
         "jj": "ROSRankings_",
         "hw": "hw-ros",  # Scraped HW rankings from Underdog Network
         "fp": "FantasyPros_",
@@ -346,11 +354,6 @@ FILE_MAPPINGS = {
 
 # Supported fantasy positions
 SUPPORTED_POSITIONS = ['QB', 'RB', 'WR', 'TE']
-
-# Current NFL season — used for season-specific URLs (HW scraper article slug).
-# NOTE: FILE_MAPPINGS prefixes and fetcher filename defaults still hardcode 2025;
-# fully centralizing the season is tracked as the season-rollover audit in SCRAPER-PLAN.md.
-CURRENT_SEASON = 2025
 
 # Default paths
 DEFAULT_PATHS = {
@@ -419,7 +422,7 @@ def get_ros_file_mappings(week: int) -> dict:
         dict: File mappings with week number dynamically generated
     """
     return {
-        "fpts": ["2025"],  # Multiple files: QB and WR/RB/TE
+        "fpts": [str(CURRENT_SEASON)],  # Multiple files: QB and WR/RB/TE
         "jj": "ROSRankings_",
         "hw": f"hw-week{week}",  # Scraped HW rankings from Underdog Network (same as weekly)
         "fp": "FantasyPros_",

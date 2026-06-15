@@ -47,7 +47,7 @@ def _build_rankings_parser() -> argparse.ArgumentParser:
 
 def _fetch_adp_command(argv) -> int:
     """Fetch FantasyPros consensus ADP into the update folder (`ff-rankings fetch-adp`)."""
-    from fantasy_pipeline.config import DEFAULT_PATHS
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
     from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_adp
 
     parser = argparse.ArgumentParser(
@@ -59,7 +59,7 @@ def _fetch_adp_command(argv) -> int:
         default=DEFAULT_PATHS['update_dir'],
         help='Directory to save the ADP CSV (default: the pipeline update folder)'
     )
-    parser.add_argument('--year', type=int, default=2025, help='Season year for the filename')
+    parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
     parser.add_argument('--min-players', type=int, default=200,
                         help='Coverage floor — fail if fewer players parse (default: 200)')
     ns = parser.parse_args(argv)
@@ -104,7 +104,7 @@ def _fetch_ds_command(argv) -> int:
 
 def _fetch_fp_command(argv) -> int:
     """Fetch FantasyPros consensus rankings into the update folder (`ff-rankings fetch-fp`)."""
-    from fantasy_pipeline.config import DEFAULT_PATHS
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
     from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_rankings
 
     parser = argparse.ArgumentParser(
@@ -116,7 +116,7 @@ def _fetch_fp_command(argv) -> int:
         default=DEFAULT_PATHS['update_dir'],
         help='Directory to save the rankings CSV (default: the pipeline update folder)'
     )
-    parser.add_argument('--year', type=int, default=2025, help='Season year for the filename')
+    parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
     parser.add_argument('--scoring', choices=['ppr', 'half-ppr', 'standard'], default='ppr',
                         help='Scoring format (default: ppr)')
     parser.add_argument('--min-players', type=int, default=200,

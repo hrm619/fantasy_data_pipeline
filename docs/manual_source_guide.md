@@ -2,60 +2,64 @@
 ## fantasy_data_pipeline — Ranking Source Files
 
 All source files must be placed in `data/rankings current/update/` before running the pipeline.
+The pipeline auto-detects files by **prefix matching** from `FILE_MAPPINGS` in `config.py`, so filenames
+must start with the prefix shown below. Season-specific prefixes derive from `CURRENT_SEASON`
+(currently `2025`) — bump that one constant at season rollover.
+
+> Status of automation per source lives in [`SCRAPER-PLAN.md`](../SCRAPER-PLAN.md).
 
 ---
 
-## Automated Sources
+## Automated Sources (no manual download needed)
 
-### FantasyPros ADP
-- **Automated:** Yes — use `ff-rankings fetch-adp` or the Python API
+### FantasyPros ADP (adp)
+- **Command:** `ff-rankings fetch-adp` (writes to `update/`)
 - **Filename:** `FantasyPros_2025_Overall_ADP_Rankings.csv`
-- **Fallback manual URL:** https://www.fantasypros.com/nfl/adp/ppr-overall.php (export button when logged in)
-
----
-
-## Manual Sources
+- **Fallback manual URL:** https://www.fantasypros.com/nfl/adp/ppr-overall.php
 
 ### FantasyPros Rankings (fp)
-- **URL:** https://www.fantasypros.com/nfl/rankings/ppr-overall.php (active during preseason, ~late June onward)
-- **Login:** Required for CSV export
-- **Export:** Click "Export" button at top of rankings table → downloads CSV
+- **Command:** `ff-rankings fetch-fp [--scoring ppr|half-ppr|standard]` (writes to `update/`)
+- **Method:** parses the cheatsheet's embedded `ecrData` JSON — works year-round (the
+  `/rankings/*-overall.php` table redirects to cheatsheets in the offseason).
 - **Filename:** `FantasyPros_2025_Draft_ALL_Rankings.csv`
-- **Note:** During offseason this page redirects to cheatsheets. Rankings go live when preseason begins.
-
-### FantasyPoints / Barrett (fpts)
-- **URL:** https://www.fantasypoints.com/nfl/rankings/half-ppr (requires subscription)
-- **Login:** FantasyPoints subscription required
-- **Export:** Navigate to rankings page → export/download CSV
-- **Filename:** Must start with `Scott Barrett` (e.g., `Scott Barrett 2025 Rankings.csv`)
-- **Note:** Multiple position-specific files may be needed. Check FILE_MAPPINGS config.
+- **Fallback manual URL:** https://www.fantasypros.com/nfl/rankings/ppr-overall.php (login required for CSV export)
 
 ### DraftShark (ds)
-- **URL:** https://www.draftsharks.com/rankings/half-ppr
-- **Login:** Not required, but full list may require scrolling/loading
-- **Export:** No built-in CSV export. Use browser table-copy or inspect network requests.
+- **Command:** `ff-rankings fetch-ds` (headless browser; needs the `headless` extra + Chromium)
+- **Method:** drives the page's own client-side "Export Rankings" button (mobile viewport) and captures
+  the CSV download — full ~558-player board.
 - **Filename:** `rankings-half-ppr.csv`
-- **Columns expected:** RK, PLAYER NAME, TEAM, POS, and additional rank columns
+- **Fallback manual URL:** https://www.draftsharks.com/ros-rankings/half-ppr (use the "Export Rankings" button)
 
 ### Hayden Winks / Underdog (hw)
-- **Redraft URL:** Navigate to Underdog Network → find preseason rankings article
-- **Weekly/ROS:** Automated via `hw_scraper.py` — no manual step needed
-- **Export:** For redraft, use the "Table Download" button if available
-- **Filename:** `tableDownload.csv`
-- **Note:** Weekly/ROS scraping is handled automatically by the pipeline when files aren't found.
+- **Weekly/ROS:** Automated via `hw_scraper.py` — auto-triggered by the pipeline when the file is absent.
+- **Redraft:** Manual. Navigate to the Underdog Network preseason rankings article → "Table Download".
+- **Filename (redraft):** `tableDownload.csv`
+
+---
+
+## Manual Sources (paywalled — automation tracked as TODO #5–#7)
+
+### FantasyPoints / Barrett (fpts)
+- **URL:** https://www.fantasypoints.com/nfl/rankings/half-ppr (subscription required)
+- **Export:** Navigate to the rankings page → export/download CSV.
+- **Filename:** Must start with `Scott Barrett` (e.g., `Scott Barrett 2025 Rankings.csv`)
+- **Columns expected (redraft):** `RK, PLAYER NAME, POS, TEAM, BYE, TIER, EXODIA` (`COLUMN_MAPPINGS['fpts']`).
 
 ### PFF (pff)
-- **URL:** https://www.pff.com/fantasy/rankings/draft (requires PFF subscription)
-- **Login:** PFF premium subscription required
-- **Export:** Click "Export" or "Download" on the rankings page
+- **URL:** https://www.pff.com/fantasy/rankings/draft (PFF premium subscription required)
+- **Export:** Click "Export"/"Download" on the rankings page.
 - **Filename:** `Draft-rankings-export.csv`
+- **Columns expected (redraft):** `RK, PLAYER NAME, TEAM, POS, POS RANK, BYE, PFF ADP, PROJ, AUCTION`.
+- **Note:** For **weekly/ROS** PFF exports the header is in the **second row** — the loader handles this
+  (`data/loader.py`), but keep the exported file's two-row header intact.
 
 ### JJ Zachariason / LateRound (jj)
-- **URL:** https://www.patreon.com/posts/ (check latest ranking post)
-- **Login:** Patreon subscription required
-- **Export:** Download the attached Excel file from the Patreon post
-- **Filename:** Must start with `Redraft1QB_` (e.g., `Redraft1QB_2025.xlsx`)
-- **Format:** Excel file with "Rankings and Tiers" sheet
+- **URL:** https://www.patreon.com/posts/ (latest ranking post; subscription required)
+- **Export:** Download the attached Excel file from the Patreon post.
+- **Filename (redraft):** Must start with `Redraft1QB_` (e.g., `Redraft1QB_2025.xlsx`). Other league types
+  use different prefixes — bestball `1QBRankings_`, ROS `ROSRankings_`, weekly `Week{N}_RankingsTiers`.
+- **Format:** Excel file with a **"Rankings and Tiers"** sheet.
 
 ---
 
@@ -66,5 +70,4 @@ All files go in:
 data/rankings current/update/
 ```
 
-The pipeline auto-detects files by prefix matching from `FILE_MAPPINGS` in `config.py`.
-After processing, source files are moved to `data/rankings current/raw archive/`.
+After processing, source files are moved to `data/rankings current/raw archive/{timestamp}/`.

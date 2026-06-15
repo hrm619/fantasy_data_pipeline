@@ -12,6 +12,8 @@ from html.parser import HTMLParser
 
 import requests
 
+from fantasy_pipeline.config import CURRENT_SEASON
+
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
@@ -117,7 +119,7 @@ def _parse_fantasypros_adp(html: str) -> list[dict]:
     return players
 
 
-def fetch_fantasypros_adp(output_dir: str, year: int = 2025, min_players: int = 200) -> str:
+def fetch_fantasypros_adp(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 200) -> str:
     """Fetch FantasyPros consensus ADP and save a pipeline-ready CSV.
 
     Writes the 7-column layout the pipeline's 'adp' source expects
@@ -206,7 +208,7 @@ def _parse_fantasypros_rankings(html: str) -> list[dict]:
     return rows
 
 
-def fetch_fantasypros_rankings(output_dir: str, year: int = 2025,
+def fetch_fantasypros_rankings(output_dir: str, year: int = CURRENT_SEASON,
                                scoring: str = "ppr", min_players: int = 200) -> str:
     """Fetch FantasyPros expert consensus rankings (fp) and save a pipeline-ready CSV.
 

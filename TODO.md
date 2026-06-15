@@ -32,13 +32,18 @@ Acceptance for each: fetched file lands in `update/` and `ff-rankings` consumes 
 
 ## Cross-cutting cleanup
 
-- ⬜ **Season-rollover audit** — `2025` is hardcoded across `FILE_MAPPINGS` prefixes and the fetchers'
-  `year` defaults; the live `fp`/`adp` data is already 2026-season. Centralize on `CURRENT_SEASON`
-  (added in `config.py`) so one bump rolls filenames + URL slugs together. *Highest-leverage cleanup.*
-- ⬜ **Verify the manual-source guide** (`docs/auto-ranking-refresh-assessment/manual_source_guide.md`)
-  for #5–#7 — filenames, scoring, sheet names — before/while automating them.
-- ⬜ **Reconcile `docs/auto-ranking-refresh-assessment/`** with reality (it predates the fetchers:
-  remove stale claims, fix player counts, reflect the JSON/headless approaches actually used).
+- ✅ **Season-rollover audit** — `CURRENT_SEASON` (in `config.py`) is now the single source of truth:
+  `FILE_MAPPINGS` `fp`/`adp` prefixes + ROS `fpts` pattern, both fetcher `year` defaults, the two
+  CLI `--year` defaults, and the HW URL slug all derive from it. Bumping 2025→2026 is now a one-line
+  change. Behavior is byte-identical at 2025; locked by `tests/test_config.py` (re-hardcoding fails CI).
+  *Note: live `fp`/`adp` data is already 2026-season — bump `CURRENT_SEASON` when the 2026 source files land.*
+- ✅ **Verify the manual-source guide** (`docs/auto-ranking-refresh-assessment/manual_source_guide.md`)
+  for #5–#7 — filenames/scoring/sheet names checked against `COLUMN_MAPPINGS`/`FILE_MAPPINGS`; added the
+  per-source expected-columns lists, JJ per-league prefixes, and the PFF weekly/ROS second-row-header note.
+- ✅ **Reconcile `docs/auto-ranking-refresh-assessment/`** with reality — fixed the stale claims (DS/fp
+  now automated, not manual/deferred), corrected the ADP count (989→~411 consensus), and documented the
+  `ecrData` JSON + headless-Playwright approaches actually shipped. *Note: these two files are duplicated
+  at `docs/` root (in-flight reorg) — I synced both copies; pick one canonical location when convenient.*
 
 ---
 
@@ -55,7 +60,9 @@ Acceptance for each: fetched file lands in `update/` and `ff-rankings` consumes 
 
 ## Known issues (pre-existing, not introduced by the scraper work)
 
-- ⬜ **`fp` duplicate `ECR` column** — `BaseProcessor._standardize_output` emits `ECR` twice for the `fp`
-  source; the pipeline dedups it in `_organize_final_dataframe`. Harmless; clean up if convenient.
+- ✅ **`fp` duplicate `ECR` column** — fixed at the source: `_standardize_output`'s optional-column loop
+  now skips columns already promoted into `ranking_columns` (fp's `ECR`/`POS ECR`), so they're emitted
+  once. Column order unchanged; no-op for non-fp sources. Downstream dedup in `_organize_final_dataframe`
+  is now redundant for this case (left in place as a harmless safety net).
 - ⬜ **fantasy-data `test_models.py::test_table_count`** — pre-existing failing test (stale table-count
   assertion), unrelated to the DraftShark sharp reclassification. Verified failing on a clean tree.

@@ -163,10 +163,11 @@ class BaseProcessor:
                 if col in df.columns and col in column_config['optional']:
                     ranking_columns.append(col)
         
-        # Add optional columns that exist
+        # Add optional columns that exist (skip any already promoted into ranking_columns,
+        # e.g. fp's ECR/POS ECR above — otherwise they'd be emitted twice and need downstream dedup)
         optional_columns = []
         for col in column_config['optional']:
-            if col in df.columns:
+            if col in df.columns and col not in ranking_columns:
                 optional_columns.append(col)
         
         # Build final column list
