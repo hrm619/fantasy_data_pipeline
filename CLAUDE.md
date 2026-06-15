@@ -472,6 +472,17 @@ passwords in code or env:
 - Override the secrets dir with `FANTASY_PIPELINE_AUTH_DIR`. Re-run `login` when a session expires.
 - Live fetch tests are **skip-gated** on Chromium + a saved session, so CI stays green.
 
+### End-to-end refresh (`ff-rankings refresh-all`)
+
+`_refresh_all_command` (in `cli/rankings.py`) is the one-command convenience wrapper: it runs all six
+redraft fetchers into `update/`, then runs the redraft consolidation (`RankingsProcessor`). Fetchers run
+**independently** — a failure (e.g. an expired paywalled session) is reported but doesn't stop the others,
+and consolidation still runs on whatever landed (`--strict` aborts instead; `--no-consolidate` fetches only).
+**Caveat:** redraft consolidation also requires Hayden Winks (`tableDownload.csv`), which has **no fetcher**
+(no stable redraft URL) and must be downloaded manually into `update/`; `refresh-all` checks for it up front
+and, if absent, fetches the six sources and skips consolidation with instructions rather than failing
+cryptically. Flags: `--data-path`, `--base-data-dir`, `--year`, `--no-consolidate`, `--strict`, `--quiet`.
+
 See `SCRAPER-PLAN.md` for the per-source automation roadmap and current status.
 
 ## HW Scraper Integration

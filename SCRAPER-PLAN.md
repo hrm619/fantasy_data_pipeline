@@ -47,8 +47,11 @@ Prefix of the filename must match `FILE_MAPPINGS[<league>][<key>]`.
 
 **🎉 ALL SEVEN SOURCES ARE AUTOMATED.** Each `update/` source now refreshes with one command
 (`fetch-adp`, `fetch-fp`, `fetch-ds`, weekly/ROS HW auto-scrape, `fetch-fpts`, `fetch-pff`, `fetch-jj`),
-with paywalled sources behind a one-time `ff-rankings login <source>`. Remaining items are cross-cutting
-(doc reconciliation — largely done) and the known loader bug below.
+with paywalled sources behind a one-time `ff-rankings login <source>`. The **`ff-rankings refresh-all`**
+wrapper runs all six redraft fetchers + the consolidation in one pass (live-verified end-to-end: 6/6 sources
+→ 306-player combined file). **Caveat:** redraft also needs the manual Hayden Winks `tableDownload.csv`
+(no fetcher — no stable redraft URL); `refresh-all` checks for it and skips consolidation with instructions
+if absent. Remaining items are cross-cutting (doc reconciliation — largely done) and the known loader bug below.
 
 ---
 

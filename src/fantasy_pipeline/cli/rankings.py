@@ -164,6 +164,114 @@ def _fetch_pff_command(argv) -> int:
         return 1
 
 
+def _refresh_all_command(argv) -> int:
+    """Fetch every redraft source into update/, then consolidate (`ff-rankings refresh-all`).
+
+    Convenience wrapper over the six redraft fetchers + the consolidation pipeline. Fetchers
+    run independently: a failure (e.g. an expired paywalled session) is reported but does not
+    stop the others, and consolidation still runs on whatever landed (use --strict to abort).
+
+    Note: redraft consolidation also requires Hayden Winks (tableDownload.csv), which has no
+    automated fetcher (no stable URL) and must be downloaded manually into update/. If it's
+    absent, the fetch still runs and consolidation is skipped with instructions.
+    """
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
+    from fantasy_pipeline import RankingsProcessor
+    from fantasy_pipeline.scraper.fetch_rankings import (
+        fetch_fantasypros_adp,
+        fetch_fantasypros_rankings,
+        fetch_draftsharks,
+        fetch_pff,
+        fetch_fpts,
+        fetch_jj,
+    )
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings refresh-all',
+        description='Fetch all redraft sources into update/, then consolidate into latest/'
+    )
+    parser.add_argument('--data-path', default=None,
+                        help='Update directory the fetchers write to and the pipeline reads '
+                             '(default: the standard update/ folder)')
+    parser.add_argument('--base-data-dir', default=None,
+                        help='Base data dir containing latest/update/archive folders')
+    parser.add_argument('--year', type=int, default=CURRENT_SEASON,
+                        help='Season year for source filenames')
+    parser.add_argument('--no-consolidate', action='store_true',
+                        help='Only fetch the sources; skip the consolidation step')
+    parser.add_argument('--strict', action='store_true',
+                        help='Abort before consolidating if any fetcher failed')
+    parser.add_argument('--quiet', action='store_true',
+                        help='Suppress verbose consolidation output')
+    ns = parser.parse_args(argv)
+
+    update_dir = ns.data_path or DEFAULT_PATHS['update_dir']
+    os.makedirs(update_dir, exist_ok=True)
+
+    # (label, thunk) — each thunk writes one source file into update_dir. These are the
+    # redraft fetchers; weekly/ROS HW is auto-scraped by the pipeline itself.
+    fetchers = [
+        ('adp  (FantasyPros ADP)',       lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
+        ('fp   (FantasyPros rankings)',  lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
+        ('ds   (DraftSharks)',           lambda: fetch_draftsharks(update_dir)),
+        ('pff  (PFF)',                   lambda: fetch_pff(update_dir, year=ns.year)),
+        ('fpts (FantasyPoints/Barrett)', lambda: fetch_fpts(update_dir, year=ns.year)),
+        ('jj   (JJ Zachariason)',        lambda: fetch_jj(update_dir, year=ns.year)),
+    ]
+
+    print(f"🔄 Refreshing {len(fetchers)} redraft sources into: {update_dir}\n")
+    results = []
+    for label, thunk in fetchers:
+        try:
+            thunk()
+            results.append((label, True, ''))
+            print(f"   ✅ {label}")
+        except Exception as e:
+            detail = str(e).splitlines()[0] if str(e) else type(e).__name__
+            results.append((label, False, detail))
+            print(f"   ❌ {label} — {detail}")
+
+    failed = [(label, detail) for label, ok, detail in results if not ok]
+    print(f"\n📥 Fetched {len(results) - len(failed)}/{len(results)} sources.")
+    if failed:
+        if any(kw in d.lower() for _, d in failed for kw in ('session', 'login', 'timeout')):
+            print("   Tip: paywalled sources may need a fresh session — "
+                  "`ff-rankings login <pff|fpts|jj>`.")
+
+    if ns.no_consolidate:
+        print("\n⏭  --no-consolidate set; leaving the fetched files in update/ (not consolidating).")
+        return 1 if failed else 0
+    if failed and ns.strict:
+        print("\n⛔ --strict set and some fetchers failed; not consolidating.")
+        return 1
+
+    # Redraft consolidation also needs Hayden Winks (tableDownload.csv), which has no
+    # automated fetcher (no stable redraft URL) and must be downloaded manually. Check it
+    # up front so we fail helpfully instead of with a cryptic "No file found for key 'hw'".
+    if not any(f.startswith("tableDownload") for f in os.listdir(update_dir)):
+        print("\n⚠️  Can't consolidate yet — redraft requires a manual source with no fetcher:")
+        print("     - hw (Hayden Winks) → tableDownload.csv")
+        print("   It has no automated fetcher (no stable Underdog URL). Download it from")
+        print("   Underdog ('Table Download') as tableDownload.csv into update/, then run:")
+        print("     ff-rankings --league-type redraft")
+        print("\n⏭  The 6 automated sources are fetched and waiting in update/; skipping consolidation.")
+        return 1
+
+    print("\n🧮 Consolidating redraft rankings...")
+    try:
+        processor = RankingsProcessor('redraft')
+        output_file = processor.process_rankings(
+            data_path=ns.data_path,
+            base_data_dir=ns.base_data_dir,
+            verbose=not ns.quiet,
+        )
+        print(f"\n✅ Combined rankings saved to: {output_file}")
+        return 1 if failed else 0
+    except Exception as e:
+        print(f"\n❌ Consolidation failed: {e}")
+        return 1
+
+
 def _fetch_jj_command(argv) -> int:
     """Fetch JJ Zachariason's redraft xlsx into the update folder (`ff-rankings fetch-jj`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
@@ -280,6 +388,9 @@ def main(args=None):
         # Additive subcommand: `ff-rankings fetch-jj ...` (JJ Zachariason Patreon xlsx)
         if argv and argv[0] == 'fetch-jj':
             return _fetch_jj_command(argv[1:])
+        # Additive subcommand: `ff-rankings refresh-all ...` (fetch every source + consolidate)
+        if argv and argv[0] == 'refresh-all':
+            return _refresh_all_command(argv[1:])
         args = _build_rankings_parser().parse_args(argv)
 
     # Validate week parameter for weekly and ROS league types
