@@ -114,3 +114,22 @@ def test_strict_aborts_consolidation_on_failure(monkeypatch, tmp_path):
 
     assert "consolidated" not in _FakeProcessor.state      # aborted before consolidating
     assert rc == 1
+
+
+def test_auto_login_skips_paywalled_source_with_invalid_session(monkeypatch, tmp_path):
+    import fantasy_pipeline.scraper.fetch_rankings as fr
+
+    calls = []
+    _stub_fetchers(monkeypatch, calls)
+    _stub_processor(monkeypatch)
+    _add_manual_hw(tmp_path)
+    # jj can't re-auth (login not completed); the other paywalled sources are fine.
+    monkeypatch.setattr(fr, "ensure_session", lambda s: s != "jj")
+
+    rc = _refresh_all_command(["--data-path", str(tmp_path), "--auto-login"])
+
+    assert "fetch_jj" not in calls                          # skipped, session invalid
+    assert "fetch_pff" in calls and "fetch_fpts" in calls   # re-authed, ran
+    assert "fetch_fantasypros_adp" in calls                 # free sources unaffected
+    assert _FakeProcessor.state.get("consolidated") is True  # still consolidated
+    assert rc == 1                                          # jj counted as a failure

@@ -479,6 +479,8 @@ def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
                 _click_pff_export(page)
             download = download_info.value
             download.save_as(output_path)
+            from fantasy_pipeline.scraper.auth import save_context_state
+            save_context_state(context, "pff")  # sliding session — capture rotated cookies
         finally:
             browser.close()
 
@@ -627,6 +629,8 @@ def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url:
                 _click_fpts_csv_download(page)
             download = download_info.value
             download.save_as(output_path)
+            from fantasy_pipeline.scraper.auth import save_context_state
+            save_context_state(context, "fpts")  # sliding session — capture rotated cookies
         finally:
             browser.close()
 
@@ -865,6 +869,8 @@ def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
                 raise RuntimeError(f"Could not parse a post id from --post-url {post_url!r}")
             file_name, download_url = _jj_attachment(context, post_id)
             raw = context.request.get(download_url).body()
+            from fantasy_pipeline.scraper.auth import save_context_state
+            save_context_state(context, "jj")  # sliding session — capture rotated cookies
         finally:
             browser.close()
 
@@ -911,3 +917,118 @@ def fetch_jj(output_dir: str, post_url: str = None, year: int = CURRENT_SEASON,
 
     print(f"JJ fetched: {count} players saved to {output_path}")
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Session validation + auto-login (paywalled sources)
+# ---------------------------------------------------------------------------
+#
+# A cheap, source-specific "are we still logged in?" probe so the CLI can pop the login
+# window *only* when a session is actually expired — instead of failing mid-fetch.
+
+
+def _validate_pff_session(context) -> bool:
+    """True if the PFF rankings page shows its export control (i.e. we're logged in)."""
+    page = context.new_page()
+    try:
+        page.goto(PFF_RANKINGS_URL, wait_until="domcontentloaded", timeout=40000)
+        page.wait_for_timeout(2500)
+        for make in (
+            lambda: page.get_by_role("button", name=re.compile(r"export|download", re.I)),
+            lambda: page.get_by_role("link", name=re.compile(r"export|download", re.I)),
+        ):
+            try:
+                make().first.wait_for(state="attached", timeout=6000)
+                return True
+            except Exception:
+                continue
+        return False
+    except Exception:
+        return False
+    finally:
+        page.close()
+
+
+def _validate_fpts_session(context) -> bool:
+    """True if the FantasyPoints redraft page renders its 'Download as CSV' control."""
+    page = context.new_page()
+    try:
+        page.goto(FPTS_RANKINGS_URL, wait_until="networkidle", timeout=40000)
+        page.wait_for_timeout(2500)
+        page.locator("button.buttons-csv, button:has-text('Download as CSV')").first.wait_for(
+            state="attached", timeout=8000
+        )
+        return True
+    except Exception:
+        return False
+    finally:
+        page.close()
+
+
+def _validate_jj_session(context) -> bool:
+    """True if Patreon's current-user API reports a logged-in user."""
+    try:
+        data = _jj_api_json(context, "https://www.patreon.com/api/current_user?json-api-version=1.0")
+        return bool(data.get("data", {}).get("id"))
+    except Exception:
+        return False
+
+
+_SESSION_VALIDATORS = {
+    "pff": _validate_pff_session,
+    "fpts": _validate_fpts_session,
+    "jj": _validate_jj_session,
+}
+
+
+def validate_session(source: str) -> bool:
+    """Return True if ``source``'s saved session still authenticates (cheap live probe).
+
+    Returns False if there's no saved session, the source isn't validatable, or the probe
+    fails for any reason (treated as 'needs login').
+    """
+    from fantasy_pipeline.scraper.auth import storage_state_path
+
+    if not storage_state_path(source).exists():
+        return False
+    validator = _SESSION_VALIDATORS.get(source)
+    if validator is None:
+        return False
+
+    sync_playwright = _require_playwright()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(
+                    storage_state=str(storage_state_path(source)),
+                    user_agent=JJ_UA,
+                )
+                return validator(context)
+            finally:
+                browser.close()
+    except Exception:
+        return False
+
+
+def ensure_session(source: str, auto_login: bool = True, timeout_minutes: int = 10) -> bool:
+    """Ensure ``source`` has a valid session, opening the login window if needed.
+
+    Probes the saved session; if it's missing/expired and ``auto_login`` is set, opens the
+    headed login window (you finish the login), then re-validates. Returns whether the
+    session is valid afterward.
+    """
+    if validate_session(source):
+        return True
+    if not auto_login:
+        return False
+
+    from fantasy_pipeline.scraper.auth import login
+
+    print(f"\n🔑 '{source}' session is missing or expired — opening a login window...")
+    try:
+        login(source, timeout_minutes=timeout_minutes)
+    except Exception as e:
+        print(f"   ⚠️  Login did not complete: {e}")
+        return False
+    return validate_session(source)

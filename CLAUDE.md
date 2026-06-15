@@ -472,6 +472,18 @@ passwords in code or env:
 - Override the secrets dir with `FANTASY_PIPELINE_AUTH_DIR`. Re-run `login` when a session expires.
 - Live fetch tests are **skip-gated** on Chromium + a saved session, so CI stays green.
 
+**Auto-login + session longevity** (so you rarely run `login` manually):
+- **`validate_session(source)`** (in `fetch_rankings.py`) is a cheap live probe — loads the source's page
+  (or hits Patreon's `current_user` API for `jj`) and checks for a logged-in signal (the export control /
+  a user id). **`ensure_session(source, auto_login=True)`** runs that probe and, if expired, opens the
+  headed login window for you, then re-validates.
+- Pass **`--auto-login`** to `refresh-all` or any paywalled `fetch-*` to use it: the login window pops
+  **only** when a session is actually expired; otherwise the fetch proceeds untouched. No stored passwords.
+- **Sliding sessions:** after each successful authenticated fetch, `auth.save_context_state(context, source)`
+  re-persists the context's cookies, so any rotated tokens extend the session's life on each use.
+- The `login` prompt nudges you to tick "Remember me" for longer-lived cookies. For guaranteed weeks-long
+  sessions independent of site behavior, a persistent browser profile (user-data-dir) is the next lever.
+
 ### End-to-end refresh (`ff-rankings refresh-all`)
 
 `_refresh_all_command` (in `cli/rankings.py`) is the one-command convenience wrapper: it runs all six

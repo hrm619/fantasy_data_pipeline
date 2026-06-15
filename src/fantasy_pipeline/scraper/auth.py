@@ -49,6 +49,20 @@ def load_storage_state(source: str) -> str:
     return str(path)
 
 
+def save_context_state(context, source: str) -> None:
+    """Re-persist a browser context's current cookies back to the session file.
+
+    Called after a successful authenticated fetch so any cookies/tokens the site
+    rotated during the request are captured — a "sliding" session that extends its
+    life on each use. Best-effort: never raises (a failed re-save must not fail a
+    fetch that already succeeded).
+    """
+    try:
+        context.storage_state(path=str(storage_state_path(source)))
+    except Exception:
+        pass
+
+
 def login(source: str, timeout_minutes: int = 10) -> str:
     """Open a headed browser for a one-time interactive login and persist the session.
 
@@ -85,6 +99,10 @@ def login(source: str, timeout_minutes: int = 10) -> str:
 
             print(f"\nA browser window opened at: {login_url}")
             print(f"Log in to {source.upper()} in that window (2FA/SSO is fine).")
+            print(
+                "  Tip: tick 'Remember me' / 'Keep me signed in' if offered — it makes the "
+                "saved session last much longer."
+            )
             print(
                 "When you're fully logged in and can see your account, return here "
                 f"and press Enter to save the session (auto-closes in {timeout_minutes} min)."

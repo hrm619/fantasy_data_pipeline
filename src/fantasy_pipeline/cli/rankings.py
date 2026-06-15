@@ -135,6 +135,20 @@ def _fetch_fp_command(argv) -> int:
         return 1
 
 
+def _ensure_session_if_requested(auto_login: bool, source: str) -> bool:
+    """If --auto-login is set, re-auth the source (pops a login window on expiry).
+
+    Returns True if it's OK to proceed with the fetch, False if a needed login wasn't completed.
+    """
+    if not auto_login:
+        return True
+    from fantasy_pipeline.scraper.fetch_rankings import ensure_session
+    if ensure_session(source):
+        return True
+    print(f"\n❌ '{source}' session invalid and login not completed.")
+    return False
+
+
 def _fetch_pff_command(argv) -> int:
     """Fetch PFF draft rankings into the update folder (`ff-rankings fetch-pff`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
@@ -152,9 +166,13 @@ def _fetch_pff_command(argv) -> int:
     parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
     parser.add_argument('--min-players', type=int, default=200,
                         help='Coverage floor — fail if fewer players are captured (default: 200)')
+    parser.add_argument('--auto-login', action='store_true',
+                        help='Open a login window if the PFF session has expired')
     ns = parser.parse_args(argv)
 
     try:
+        if not _ensure_session_if_requested(ns.auto_login, 'pff'):
+            return 1
         os.makedirs(ns.output, exist_ok=True)
         path = fetch_pff(ns.output, year=ns.year, min_players=ns.min_players)
         print(f"\n✅ PFF rankings saved to: {path}")
@@ -201,6 +219,8 @@ def _refresh_all_command(argv) -> int:
                         help='Only fetch the sources; skip the consolidation step')
     parser.add_argument('--strict', action='store_true',
                         help='Abort before consolidating if any fetcher failed')
+    parser.add_argument('--auto-login', action='store_true',
+                        help='For paywalled sources, auto-open a login window if the session expired')
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress verbose consolidation output')
     ns = parser.parse_args(argv)
@@ -208,20 +228,29 @@ def _refresh_all_command(argv) -> int:
     update_dir = ns.data_path or DEFAULT_PATHS['update_dir']
     os.makedirs(update_dir, exist_ok=True)
 
-    # (label, thunk) — each thunk writes one source file into update_dir. These are the
-    # redraft fetchers; weekly/ROS HW is auto-scraped by the pipeline itself.
+    # (label, source, thunk) — each thunk writes one source file into update_dir. `source`
+    # is the paywalled-session key (None for free sources). These are the redraft fetchers;
+    # weekly/ROS HW is auto-scraped by the pipeline itself.
     fetchers = [
-        ('adp  (FantasyPros ADP)',       lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
-        ('fp   (FantasyPros rankings)',  lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
-        ('ds   (DraftSharks)',           lambda: fetch_draftsharks(update_dir)),
-        ('pff  (PFF)',                   lambda: fetch_pff(update_dir, year=ns.year)),
-        ('fpts (FantasyPoints/Barrett)', lambda: fetch_fpts(update_dir, year=ns.year)),
-        ('jj   (JJ Zachariason)',        lambda: fetch_jj(update_dir, year=ns.year)),
+        ('adp  (FantasyPros ADP)',       None,   lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
+        ('fp   (FantasyPros rankings)',  None,   lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
+        ('ds   (DraftSharks)',           None,   lambda: fetch_draftsharks(update_dir)),
+        ('pff  (PFF)',                   'pff',  lambda: fetch_pff(update_dir, year=ns.year)),
+        ('fpts (FantasyPoints/Barrett)', 'fpts', lambda: fetch_fpts(update_dir, year=ns.year)),
+        ('jj   (JJ Zachariason)',        'jj',   lambda: fetch_jj(update_dir, year=ns.year)),
     ]
 
     print(f"🔄 Refreshing {len(fetchers)} redraft sources into: {update_dir}\n")
     results = []
-    for label, thunk in fetchers:
+    for label, source, thunk in fetchers:
+        # With --auto-login, re-auth a paywalled source up front if its session expired
+        # (pops a login window) so the fetch below doesn't fail on a stale session.
+        if source and ns.auto_login:
+            from fantasy_pipeline.scraper.fetch_rankings import ensure_session
+            if not ensure_session(source):
+                results.append((label, False, 'session invalid; login not completed'))
+                print(f"   ❌ {label} — session invalid; skipped")
+                continue
         try:
             thunk()
             results.append((label, True, ''))
@@ -291,9 +320,13 @@ def _fetch_jj_command(argv) -> int:
     parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
     parser.add_argument('--min-players', type=int, default=150,
                         help='Coverage floor — fail if fewer players are found (default: 150)')
+    parser.add_argument('--auto-login', action='store_true',
+                        help='Open a login window if the Patreon session has expired')
     ns = parser.parse_args(argv)
 
     try:
+        if not _ensure_session_if_requested(ns.auto_login, 'jj'):
+            return 1
         os.makedirs(ns.output, exist_ok=True)
         path = fetch_jj(ns.output, post_url=ns.post_url, year=ns.year, min_players=ns.min_players)
         print(f"\n✅ JJ rankings saved to: {path}")
@@ -322,9 +355,13 @@ def _fetch_fpts_command(argv) -> int:
                         help='Coverage floor — fail if fewer players are captured (default: 90)')
     parser.add_argument('--url', default=FPTS_RANKINGS_URL,
                         help='Rankings page to export from (override for live verification)')
+    parser.add_argument('--auto-login', action='store_true',
+                        help='Open a login window if the FantasyPoints session has expired')
     ns = parser.parse_args(argv)
 
     try:
+        if not _ensure_session_if_requested(ns.auto_login, 'fpts'):
+            return 1
         os.makedirs(ns.output, exist_ok=True)
         path = fetch_fpts(ns.output, year=ns.year, min_players=ns.min_players, rankings_url=ns.url)
         print(f"\n✅ FantasyPoints rankings saved to: {path}")
