@@ -54,8 +54,10 @@ def tmp_player_key(tmp_path):
 @pytest.fixture
 def sample_player_df():
     """Create a sample DataFrame with player names."""
-    return pd.DataFrame({
-        "PLAYER NAME": ["Patrick Mahomes", "Tyreek Hill", "Unknown Player"],
-        "POS": ["QB", "WR", "RB"],
-        "TEAM": ["KC", "MIA", "???"],
-    })
+    return pd.DataFrame(
+        {
+            "PLAYER NAME": ["Patrick Mahomes", "Tyreek Hill", "Unknown Player"],
+            "POS": ["QB", "WR", "RB"],
+            "TEAM": ["KC", "MIA", "???"],
+        }
+    )

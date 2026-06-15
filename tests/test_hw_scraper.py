@@ -12,14 +12,10 @@ from fantasy_pipeline.scraper import hw_scraper
 class TestGetHwScraperUrl:
     def test_weekly_url_uses_default_season(self):
         url = get_hw_scraper_url(week=8, league_type="weekly")
-        assert url.endswith(
-            f"week-8-fantasy-football-rankings-the-blueprint-{CURRENT_SEASON}"
-        )
+        assert url.endswith(f"week-8-fantasy-football-rankings-the-blueprint-{CURRENT_SEASON}")
 
     def test_ros_uses_same_pattern_as_weekly(self):
-        assert get_hw_scraper_url(week=5, league_type="ros") == get_hw_scraper_url(
-            week=5, league_type="weekly"
-        )
+        assert get_hw_scraper_url(week=5, league_type="ros") == get_hw_scraper_url(week=5, league_type="weekly")
 
     def test_season_is_parameterized(self):
         url = get_hw_scraper_url(week=1, league_type="weekly", season=2026)

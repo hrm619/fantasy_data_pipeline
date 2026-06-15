@@ -21,16 +21,13 @@ SOURCE_LOGIN_URLS = {
 }
 
 # Where persisted sessions live — deliberately outside the repo working tree.
-AUTH_DIR = Path(os.environ.get("FANTASY_PIPELINE_AUTH_DIR",
-                               Path.home() / ".fantasy_pipeline" / "auth"))
+AUTH_DIR = Path(os.environ.get("FANTASY_PIPELINE_AUTH_DIR", Path.home() / ".fantasy_pipeline" / "auth"))
 
 
 def storage_state_path(source: str) -> Path:
     """Return the path to ``<source>``'s persisted Playwright storage-state file."""
     if source not in SOURCE_LOGIN_URLS:
-        raise ValueError(
-            f"Unknown auth source '{source}'. Known: {sorted(SOURCE_LOGIN_URLS)}"
-        )
+        raise ValueError(f"Unknown auth source '{source}'. Known: {sorted(SOURCE_LOGIN_URLS)}")
     return AUTH_DIR / f"{source}.json"
 
 
@@ -82,9 +79,7 @@ def login(source: str, timeout_minutes: int = 10) -> str:
 
     login_url = SOURCE_LOGIN_URLS.get(source)
     if login_url is None:
-        raise ValueError(
-            f"Unknown auth source '{source}'. Known: {sorted(SOURCE_LOGIN_URLS)}"
-        )
+        raise ValueError(f"Unknown auth source '{source}'. Known: {sorted(SOURCE_LOGIN_URLS)}")
 
     out_path = storage_state_path(source)
     out_path.parent.mkdir(parents=True, exist_ok=True)

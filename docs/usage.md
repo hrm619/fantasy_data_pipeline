@@ -58,7 +58,7 @@ moved to `agg archive/`, and the consumed `update/` files to `raw archive/`, bot
 | `ros` | `ff-rankings --league-type ros --week N` | Rest-of-season; positional focus. HW auto-scraped. |
 
 `--week` is required for `weekly` and `ros`. For those types the pipeline auto-scrapes Hayden Winks
-from Underdog Network if `hw-week{N}.csv` / `hw-ros.csv` isn't already present.
+from Underdog Network if `hw-week{N}.csv` isn't already present (weekly and ROS share this filename).
 
 Useful flags: `--data-path` (the `update/` folder), `--base-data-dir` (parent of latest/update/archive),
 `--player-key-path`, `--quiet`, `--verbose`.

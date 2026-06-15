@@ -10,6 +10,7 @@ import json
 import os
 import re
 from html.parser import HTMLParser
+from typing import Optional
 
 import requests
 
@@ -105,17 +106,19 @@ def _parse_fantasypros_adp(html: str) -> list[dict]:
 
         name, team, bye = _parse_player_cell(row[1])
         pos = re.sub(r"\d+$", "", row[2].strip())  # 'RB1' -> 'RB'
-        adp = row[3].strip()                        # consensus AVG (last column)
+        adp = row[3].strip()  # consensus AVG (last column)
 
-        players.append({
-            "PLAYER NAME": name,
-            "TEAM": team,
-            "BYE": bye,
-            "POS": pos,
-            "ADP": adp,
-            "MARKET INDEX": "",
-            "RT": "",
-        })
+        players.append(
+            {
+                "PLAYER NAME": name,
+                "TEAM": team,
+                "BYE": bye,
+                "POS": pos,
+                "ADP": adp,
+                "MARKET INDEX": "",
+                "RT": "",
+            }
+        )
 
     return players
 
@@ -189,28 +192,29 @@ def _parse_fantasypros_rankings(html: str) -> list[dict]:
     """
     match = re.search(r"var\s+ecrData\s*=\s*(\{.*?\});", html, re.DOTALL)
     if not match:
-        raise RuntimeError(
-            "Could not find ecrData JSON on the FantasyPros rankings page — layout changed"
-        )
+        raise RuntimeError("Could not find ecrData JSON on the FantasyPros rankings page — layout changed")
     players = json.loads(match.group(1)).get("players", [])
 
     rows = []
     for p in players:
-        rows.append({
-            "ECR": p.get("rank_ecr", ""),
-            "TIER": p.get("tier", ""),
-            "PLAYER NAME": p.get("player_name", ""),
-            "TEAM": p.get("player_team_id", ""),
-            "POS": p.get("player_position_id", ""),
-            "BYE": p.get("player_bye_week", ""),
-            "SOS": "",
-            "ECR VS ADP": "",
-        })
+        rows.append(
+            {
+                "ECR": p.get("rank_ecr", ""),
+                "TIER": p.get("tier", ""),
+                "PLAYER NAME": p.get("player_name", ""),
+                "TEAM": p.get("player_team_id", ""),
+                "POS": p.get("player_position_id", ""),
+                "BYE": p.get("player_bye_week", ""),
+                "SOS": "",
+                "ECR VS ADP": "",
+            }
+        )
     return rows
 
 
-def fetch_fantasypros_rankings(output_dir: str, year: int = CURRENT_SEASON,
-                               scoring: str = "ppr", min_players: int = 200) -> str:
+def fetch_fantasypros_rankings(
+    output_dir: str, year: int = CURRENT_SEASON, scoring: str = "ppr", min_players: int = 200
+) -> str:
     """Fetch FantasyPros expert consensus rankings (fp) and save a pipeline-ready CSV.
 
     Reads the embedded `ecrData` JSON from the cheatsheet page (works year-round, unlike
@@ -233,9 +237,7 @@ def fetch_fantasypros_rankings(output_dir: str, year: int = CURRENT_SEASON,
     if scoring not in FP_CHEATSHEET_URLS:
         raise ValueError(f"Unknown scoring {scoring!r}; choose from {sorted(FP_CHEATSHEET_URLS)}")
 
-    response = requests.get(
-        FP_CHEATSHEET_URLS[scoring], headers={"User-Agent": USER_AGENT}, timeout=30
-    )
+    response = requests.get(FP_CHEATSHEET_URLS[scoring], headers={"User-Agent": USER_AGENT}, timeout=30)
     response.raise_for_status()
 
     players = _parse_fantasypros_rankings(response.text)
@@ -267,15 +269,39 @@ DS_OUTPUT_FILENAME = "rankings-half-ppr.csv"
 # The exact header DraftSharks' client-side "Export Rankings" CSV emits, in order.
 # This is what the pipeline renames POSITIONALLY into COLUMN_MAPPINGS['ds'] (14 cols).
 DS_EXPORT_HEADER = [
-    "Rank", "Team", "Player", "Fantasy Position", "Games", "ADP", "Bye", "SOS",
-    "InjuryRisk", "Floor Proj", "Consensus Proj", "DS Proj", "CeilingProj", "3D Value",
+    "Rank",
+    "Team",
+    "Player",
+    "Fantasy Position",
+    "Games",
+    "ADP",
+    "Bye",
+    "SOS",
+    "InjuryRisk",
+    "Floor Proj",
+    "Consensus Proj",
+    "DS Proj",
+    "CeilingProj",
+    "3D Value",
 ]
 
 # Pipeline-facing column order (must equal COLUMN_MAPPINGS['ds']). Used only when we
 # fall back to reading the rendered DOM and must assemble the export layout ourselves.
 DS_OUTPUT_COLUMNS = [
-    "RK", "TEAM", "PLAYER NAME", "POS", "G", "DS ADP", "BYE", "SOS",
-    "INJURY RISK", "FLOOR PROJ", "CONS PROJ", "DS PROJ", "CEILING PROJ", "3D VALUE",
+    "RK",
+    "TEAM",
+    "PLAYER NAME",
+    "POS",
+    "G",
+    "DS ADP",
+    "BYE",
+    "SOS",
+    "INJURY RISK",
+    "FLOOR PROJ",
+    "CONS PROJ",
+    "DS PROJ",
+    "CEILING PROJ",
+    "3D VALUE",
 ]
 
 # A mobile UA + small viewport are what reveals the *ungated* export button. On
@@ -300,6 +326,7 @@ def _require_playwright():
             "  playwright install chromium"
         ) from exc
     from playwright.sync_api import sync_playwright
+
     return sync_playwright
 
 
@@ -330,8 +357,7 @@ def _ds_capture_export_csv(output_path: str) -> int:
             browser = p.chromium.launch(headless=True)
         except Exception as exc:  # browser binary missing
             raise RuntimeError(
-                "Could not launch Chromium. Install the browser with:\n"
-                "  playwright install chromium"
+                "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
             ) from exc
         try:
             context = browser.new_context(
@@ -413,8 +439,15 @@ PFF_RANKINGS_URL = "https://www.pff.com/fantasy/rankings/draft"
 # header row (the file has a title row above it) and renames POSITIONALLY into
 # COLUMN_MAPPINGS['pff'].
 PFF_EXPORT_HEADER = [
-    "Overall Rank", "Full Name", "Team Abbreviation", "Position", "Position Rank",
-    "Bye Week", "ADP", "Projected Points", "Auction Value",
+    "Overall Rank",
+    "Full Name",
+    "Team Abbreviation",
+    "Position",
+    "Position Rank",
+    "Bye Week",
+    "ADP",
+    "Projected Points",
+    "Auction Value",
 ]
 
 
@@ -464,8 +497,7 @@ def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
             browser = p.chromium.launch(headless=True)
         except Exception as exc:  # browser binary missing
             raise RuntimeError(
-                "Could not launch Chromium. Install the browser with:\n"
-                "  playwright install chromium"
+                "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
             ) from exc
         try:
             context = browser.new_context(
@@ -480,6 +512,7 @@ def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
             download = download_info.value
             download.save_as(output_path)
             from fantasy_pipeline.scraper.auth import save_context_state
+
             save_context_state(context, "pff")  # sliding session — capture rotated cookies
         finally:
             browser.close()
@@ -504,15 +537,12 @@ def _validate_pff_csv(output_path: str) -> int:
     )
     if header_idx is None:
         raise RuntimeError(
-            "PFF export missing the 'Overall Rank' header row — not logged in, "
-            "or the export layout changed"
+            "PFF export missing the 'Overall Rank' header row — not logged in, or the export layout changed"
         )
     header = [h.strip() for h in rows[header_idx]]
     if header != PFF_EXPORT_HEADER:
-        raise RuntimeError(
-            f"PFF export header changed — expected {PFF_EXPORT_HEADER}, got {header}"
-        )
-    data_rows = [r for r in rows[header_idx + 1:] if r and r[0].strip()]
+        raise RuntimeError(f"PFF export header changed — expected {PFF_EXPORT_HEADER}, got {header}")
+    data_rows = [r for r in rows[header_idx + 1 :] if r and r[0].strip()]
     return len(data_rows)
 
 
@@ -577,15 +607,13 @@ def _select_fpts_barrett(page) -> None:
     The page loads Hansen's rankings by default; clicking the "BARRETT'S RANKINGS" tab
     re-renders the table with Barrett's data (page title gains "Barrett's").
     """
-    tab = page.locator("a:has-text(\"BARRETT'S RANKINGS\")").first
+    tab = page.locator('a:has-text("BARRETT\'S RANKINGS")').first
     tab.wait_for(state="visible", timeout=20000)
     tab.click()
     # Confirm the board actually switched before exporting (guards against silently
     # downloading Hansen's rankings under the Barrett filename).
     try:
-        page.wait_for_function(
-            "() => /barrett/i.test(document.title)", timeout=15000
-        )
+        page.wait_for_function("() => /barrett/i.test(document.title)", timeout=15000)
     except Exception as exc:
         raise RuntimeError(
             "Clicked 'BARRETT'S RANKINGS' but the page title never switched to Barrett's "
@@ -612,8 +640,7 @@ def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url:
             browser = p.chromium.launch(headless=True)
         except Exception as exc:  # browser binary missing
             raise RuntimeError(
-                "Could not launch Chromium. Install the browser with:\n"
-                "  playwright install chromium"
+                "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
             ) from exc
         try:
             context = browser.new_context(
@@ -630,6 +657,7 @@ def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url:
             download = download_info.value
             download.save_as(output_path)
             from fantasy_pipeline.scraper.auth import save_context_state
+
             save_context_state(context, "fpts")  # sliding session — capture rotated cookies
         finally:
             browser.close()
@@ -654,8 +682,9 @@ def _validate_fpts_csv(output_path: str) -> int:
     return len(data_rows)
 
 
-def fetch_fpts(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 90,
-               rankings_url: str = FPTS_RANKINGS_URL) -> str:
+def fetch_fpts(
+    output_dir: str, year: int = CURRENT_SEASON, min_players: int = 90, rankings_url: str = FPTS_RANKINGS_URL
+) -> str:
     """Fetch FantasyPoints (Scott Barrett) redraft rankings via a saved session; save a CSV.
 
     FantasyPoints is behind a subscription. This reuses the session saved by
@@ -708,8 +737,7 @@ def fetch_fpts(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 9
 #      matches: RK, PLAYER NAME, POS, POS RANK, TIER, AUCTION).
 JJ_COLLECTION_URL = "https://www.patreon.com/collection/47664"
 JJ_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
 # 6-col output header; the pipeline renames it positionally into COLUMN_MAPPINGS['jj'].
@@ -725,9 +753,7 @@ def _jj_is_redraft_title(title: str) -> bool:
     """True if a collection post title is the 1QB redraft (not superflex/ROS/weekly)."""
     t = (title or "").lower()
     return (
-        "1qb" in t
-        and ("redraft" in t or "season-long" in t)
-        and not re.search(r"superflex|rest-of-season|weekly", t)
+        "1qb" in t and ("redraft" in t or "season-long" in t) and not re.search(r"superflex|rest-of-season|weekly", t)
     )
 
 
@@ -748,7 +774,7 @@ def _jj_adapt_rows(rows: list) -> list:
     for r in rows:
         cells = ["" if c is None else c for c in r]
         if len(cells) == width - 1:
-            cells = cells + [""]          # pad the dropped Auction column
+            cells = cells + [""]  # pad the dropped Auction column
         if len(cells) >= width:
             out.append([str(c) for c in cells[:width]])
         # too-short / blank spacer rows are skipped
@@ -769,6 +795,7 @@ def _jj_rows_from_attachment(file_name: str, raw: bytes) -> list:
         return list(csv.reader(io.StringIO(raw.decode("utf-8-sig"))))
     if name.endswith(".xlsx"):
         import openpyxl
+
         wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True)
         try:
             sheet = "Rankings and Tiers" if "Rankings and Tiers" in wb.sheetnames else wb.sheetnames[-1]
@@ -828,15 +855,17 @@ def _jj_attachment(context, post_id: str) -> tuple:
     data = _jj_api_json(context, api)
     media = [m["attributes"] for m in data.get("included", []) if m.get("type") == "media"]
     target = next(
-        (m for m in media
-         if "redraft1qb" in (m.get("file_name") or "").lower()
-         and (m.get("file_name") or "").lower().endswith((".csv", ".xlsx"))),
+        (
+            m
+            for m in media
+            if "redraft1qb" in (m.get("file_name") or "").lower()
+            and (m.get("file_name") or "").lower().endswith((".csv", ".xlsx"))
+        ),
         None,
     )
     if not target:
         raise RuntimeError(
-            f"Post {post_id} has no Redraft1QB .csv/.xlsx attachment "
-            f"(found: {[m.get('file_name') for m in media]})"
+            f"Post {post_id} has no Redraft1QB .csv/.xlsx attachment (found: {[m.get('file_name') for m in media]})"
         )
     return target["file_name"], target["download_url"]
 
@@ -853,8 +882,7 @@ def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
             browser = p.chromium.launch(headless=True)
         except Exception as exc:  # browser binary missing
             raise RuntimeError(
-                "Could not launch Chromium. Install the browser with:\n"
-                "  playwright install chromium"
+                "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
             ) from exc
         try:
             context = browser.new_context(
@@ -870,6 +898,7 @@ def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
             file_name, download_url = _jj_attachment(context, post_id)
             raw = context.request.get(download_url).body()
             from fantasy_pipeline.scraper.auth import save_context_state
+
             save_context_state(context, "jj")  # sliding session — capture rotated cookies
         finally:
             browser.close()
@@ -877,8 +906,9 @@ def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
     return _jj_adapt_rows(_jj_rows_from_attachment(file_name, raw))
 
 
-def fetch_jj(output_dir: str, post_url: str = None, year: int = CURRENT_SEASON,
-             min_players: int = 150) -> str:
+def fetch_jj(
+    output_dir: str, post_url: Optional[str] = None, year: int = CURRENT_SEASON, min_players: int = 150
+) -> str:
     """Fetch JJ Zachariason's 1QB redraft rankings from Patreon via a saved session.
 
     Reuses the session from `ff-rankings login jj` (no password handled). By default it

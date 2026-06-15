@@ -18,53 +18,26 @@ def main(args=None):
               If None, will parse sys.argv directly
     """
     # Import from core package
-    from fantasy_pipeline.core.stats_aggregator import (
-        aggregate_player_historical_stats,
-        create_rankings_ready_dataset
-    )
+    from fantasy_pipeline.core.stats_aggregator import aggregate_player_historical_stats, create_rankings_ready_dataset
 
     # If called standalone, parse arguments
     if args is None:
-        parser = argparse.ArgumentParser(
-            description='Generate historical player statistics for rankings'
+        parser = argparse.ArgumentParser(description="Generate historical player statistics for rankings")
+        parser.add_argument(
+            "--season-data", default="data/fpts historical/combined_data.csv", help="Path to season totals CSV file"
         )
         parser.add_argument(
-            '--season-data',
-            default="data/fpts historical/combined_data.csv",
-            help='Path to season totals CSV file'
-        )
-        parser.add_argument(
-            '--weekly-data',
+            "--weekly-data",
             default="data/fpts historical/weekly_data.csv",
-            help='Path to weekly fantasy points CSV file'
+            help="Path to weekly fantasy points CSV file",
         )
+        parser.add_argument("--player-key", default="player_key_dict.json", help="Path to player key dictionary")
+        parser.add_argument("--season", type=int, default=2024, help="Season to filter (default: 2024)")
+        parser.add_argument("--min-games", type=int, default=10, help="Minimum games played (default: 10)")
         parser.add_argument(
-            '--player-key',
-            default="player_key_dict.json",
-            help='Path to player key dictionary'
+            "--output", default="data/rankings current/latest/", help="Output directory for rankings-ready file"
         )
-        parser.add_argument(
-            '--season',
-            type=int,
-            default=2024,
-            help='Season to filter (default: 2024)'
-        )
-        parser.add_argument(
-            '--min-games',
-            type=int,
-            default=10,
-            help='Minimum games played (default: 10)'
-        )
-        parser.add_argument(
-            '--output',
-            default="data/rankings current/latest/",
-            help='Output directory for rankings-ready file'
-        )
-        parser.add_argument(
-            '--quiet',
-            action='store_true',
-            help='Suppress verbose output'
-        )
+        parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
         args = parser.parse_args()
 
     try:
@@ -78,7 +51,7 @@ def main(args=None):
             player_key_path=args.player_key,
             season_filter=args.season,
             output_dir=None,  # Don't save intermediate file
-            verbose=not args.quiet
+            verbose=not args.quiet,
         )
 
         # Step 2: Create rankings-ready dataset
@@ -87,7 +60,7 @@ def main(args=None):
             current_season=str(args.season),
             min_games=args.min_games,
             output_dir=args.output,
-            verbose=not args.quiet
+            verbose=not args.quiet,
         )
 
         print(f"\n✅ Success! Generated stats for {len(rankings_ready)} players")
@@ -102,6 +75,7 @@ def main(args=None):
         print(f"\n❌ Error generating stats: {str(e)}")
         if not args.quiet:
             import traceback
+
             traceback.print_exc()
         return 1
 

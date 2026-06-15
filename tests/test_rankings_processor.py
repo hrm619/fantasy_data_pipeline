@@ -43,11 +43,13 @@ class TestProcessRankingsSignature:
     def test_return_dataframe_param_exists(self):
         proc = RankingsProcessor()
         import inspect
+
         sig = inspect.signature(proc.process_rankings)
         assert "return_dataframe" in sig.parameters
         assert sig.parameters["return_dataframe"].default is False
 
     def test_return_type_annotation(self):
         import inspect
+
         sig = inspect.signature(RankingsProcessor.process_rankings)
         assert sig.return_annotation == "str | pd.DataFrame"

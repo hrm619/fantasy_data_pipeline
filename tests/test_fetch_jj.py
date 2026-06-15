@@ -23,20 +23,26 @@ from fantasy_pipeline.scraper.fetch_rankings import (
 
 
 class TestRedraftTitleMatch:
-    @pytest.mark.parametrize("title", [
-        "updated 1QB season-long rankings attached",
-        "May 2026 1QB Redraft and Best Ball Rankings Update (5/11/26)",
-        "August 2025 1QB Redraft and Best Ball Rankings",
-    ])
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "updated 1QB season-long rankings attached",
+            "May 2026 1QB Redraft and Best Ball Rankings Update (5/11/26)",
+            "August 2025 1QB Redraft and Best Ball Rankings",
+        ],
+    )
     def test_matches_1qb_redraft(self, title):
         assert _jj_is_redraft_title(title)
 
-    @pytest.mark.parametrize("title", [
-        "August 2025 Superflex Redraft Rankings and Tiers",
-        "Rest-of-Season Rankings Entering Week 7",
-        "Hansen's Weekly Ranks",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "August 2025 Superflex Redraft Rankings and Tiers",
+            "Rest-of-Season Rankings Entering Week 7",
+            "Hansen's Weekly Ranks",
+            "",
+        ],
+    )
     def test_rejects_non_1qb_redraft(self, title):
         assert not _jj_is_redraft_title(title)
 
@@ -75,8 +81,7 @@ class TestRowsFromAttachment:
 
 class TestAdaptRows:
     def test_pads_5col_to_6col(self):
-        rows = [["Overall", "Player", "Position", "Pos Rank", "Tier"],
-                ["1", "Gibbs", "RB", "1", "1"]]
+        rows = [["Overall", "Player", "Position", "Pos Rank", "Tier"], ["1", "Gibbs", "RB", "1", "1"]]
         out = _jj_adapt_rows(rows)
         assert all(len(r) == len(JJ_OUTPUT_COLUMNS) for r in out)
         assert out[1] == ["1", "Gibbs", "RB", "1", "1", ""]  # blank Auction appended
@@ -94,8 +99,12 @@ class TestAdaptRows:
 
 class TestDataRowCount:
     def test_counts_numeric_first_cell_after_header(self):
-        rows = [JJ_OUTPUT_COLUMNS, ["1", "a", "RB", "1", "1", ""], ["2", "b", "WR", "1", "1", ""],
-                ["", "spacer", "", "", "", ""]]
+        rows = [
+            JJ_OUTPUT_COLUMNS,
+            ["1", "a", "RB", "1", "1", ""],
+            ["2", "b", "WR", "1", "1", ""],
+            ["", "spacer", "", "", "", ""],
+        ]
         assert _jj_data_row_count(rows) == 2
 
 
@@ -124,6 +133,7 @@ def _has_chromium():
 
 def _has_jj_session():
     from fantasy_pipeline.scraper.auth import storage_state_path
+
     return storage_state_path("jj").exists()
 
 

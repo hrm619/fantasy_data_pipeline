@@ -17,19 +17,13 @@ from fantasy_pipeline.scraper.fetch_rankings import (
 class TestSeasonCentralization:
     def test_redraft_fp_prefix_tracks_current_season(self):
         assert str(c.CURRENT_SEASON) in c.FILE_MAPPINGS["redraft"]["fp"]
-        assert c.FILE_MAPPINGS["redraft"]["fp"] == (
-            f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings"
-        )
+        assert c.FILE_MAPPINGS["redraft"]["fp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings")
 
     def test_redraft_adp_prefix_tracks_current_season(self):
-        assert c.FILE_MAPPINGS["redraft"]["adp"] == (
-            f"FantasyPros_{c.CURRENT_SEASON}_Overall_ADP_Rankings"
-        )
+        assert c.FILE_MAPPINGS["redraft"]["adp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Overall_ADP_Rankings")
 
     def test_bestball_fp_prefix_tracks_current_season(self):
-        assert c.FILE_MAPPINGS["bestball"]["fp"] == (
-            f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings"
-        )
+        assert c.FILE_MAPPINGS["bestball"]["fp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings")
 
     def test_ros_fpts_file_pattern_tracks_current_season(self):
         assert c.FILE_MAPPINGS["ros"]["fpts"] == [str(c.CURRENT_SEASON)]

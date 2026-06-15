@@ -23,8 +23,20 @@ from fantasy_pipeline.scraper.fetch_rankings import (
 # One real row from a manual DraftSharks "Export Rankings" CSV (column order matches
 # the rendered DOM table), used to exercise the DOM-fallback mapping helper.
 _SAMPLE_DOM_ROW = [
-    "1", "PHI", "Saquon Barkley", "RB", "17", "1.03", "9", "-2.8%", "58%",
-    "246.5", "284", "301", "345.7", "100",
+    "1",
+    "PHI",
+    "Saquon Barkley",
+    "RB",
+    "17",
+    "1.03",
+    "9",
+    "-2.8%",
+    "58%",
+    "246.5",
+    "284",
+    "301",
+    "345.7",
+    "100",
 ]
 
 
@@ -53,8 +65,22 @@ class TestDomRowMapping:
         assert row["3D VALUE"] == "100"
 
     def test_strips_whitespace(self):
-        padded = ["  2 ", " CIN ", " Ja'Marr Chase ", "WR", "17", "1.01", "10",
-                  "0.4%", "75%", "237.8", "272", "287", "329.5", "98.7"]
+        padded = [
+            "  2 ",
+            " CIN ",
+            " Ja'Marr Chase ",
+            "WR",
+            "17",
+            "1.01",
+            "10",
+            "0.4%",
+            "75%",
+            "237.8",
+            "272",
+            "287",
+            "329.5",
+            "98.7",
+        ]
         row = _ds_dom_row_to_output(padded)
         assert row["TEAM"] == "CIN"
         assert row["PLAYER NAME"] == "Ja'Marr Chase"  # apostrophe preserved

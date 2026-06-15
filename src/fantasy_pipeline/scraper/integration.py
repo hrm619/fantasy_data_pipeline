@@ -7,6 +7,7 @@ update folder for processing.
 """
 
 import os
+from typing import Optional
 
 from .hw_scraper import scrape_fantasy_rankings
 from ..config import get_hw_scraper_url, DEFAULT_PATHS
@@ -17,8 +18,9 @@ def _hw_output_filename(week: int) -> str:
     return f"hw-week{week}.csv"
 
 
-def run_hw_scraper(week: int = None, league_type: str = 'weekly',
-                   data_path: str = None, verbose: bool = True) -> str:
+def run_hw_scraper(
+    week: Optional[int] = None, league_type: str = "weekly", data_path: Optional[str] = None, verbose: bool = True
+) -> str:
     """
     Run the HW ranking scraper and save output to the update folder.
 
@@ -35,12 +37,12 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
         ValueError: If week is not provided for weekly league type
         Exception: If scraping fails
     """
-    # Validate inputs
-    if league_type in ['weekly', 'ros'] and week is None:
-        raise ValueError(f"Week number is required for {league_type} league type")
+    # HW scraping always keys its output on a week (weekly and ROS both use hw-week{N}.csv)
+    if week is None:
+        raise ValueError(f"Week number is required for HW scraping ({league_type})")
 
     # Use default data path if not provided
-    data_path = data_path or DEFAULT_PATHS['update_dir']
+    data_path = data_path or DEFAULT_PATHS["update_dir"]
 
     # Ensure data path exists
     os.makedirs(data_path, exist_ok=True)
@@ -65,8 +67,8 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
         if verbose:
             print(f"   ✓ Scraped {len(df)} players")
             print("   Position breakdown:")
-            for pos in ['QB', 'RB', 'WR', 'TE']:
-                count = len(df[df['Position'] == pos])
+            for pos in ["QB", "RB", "WR", "TE"]:
+                count = len(df[df["Position"] == pos])
                 if count > 0:
                     print(f"     {pos}: {count} players")
 
@@ -87,8 +89,9 @@ def run_hw_scraper(week: int = None, league_type: str = 'weekly',
         raise
 
 
-def check_hw_scraper_output_exists(week: int = None, league_type: str = 'weekly',
-                                    data_path: str = None) -> bool:
+def check_hw_scraper_output_exists(
+    week: Optional[int] = None, league_type: str = "weekly", data_path: Optional[str] = None
+) -> bool:
     """
     Check if HW scraper output already exists in the update folder.
 
@@ -100,15 +103,22 @@ def check_hw_scraper_output_exists(week: int = None, league_type: str = 'weekly'
     Returns:
         bool: True if file exists, False otherwise
     """
-    data_path = data_path or DEFAULT_PATHS['update_dir']
+    if week is None:
+        raise ValueError(f"Week number is required for HW scraping ({league_type})")
+
+    data_path = data_path or DEFAULT_PATHS["update_dir"]
 
     file_path = os.path.join(data_path, _hw_output_filename(week))
     return os.path.exists(file_path)
 
 
-def auto_scrape_if_needed(week: int = None, league_type: str = 'weekly',
-                          data_path: str = None, force: bool = False,
-                          verbose: bool = True) -> str:
+def auto_scrape_if_needed(
+    week: Optional[int] = None,
+    league_type: str = "weekly",
+    data_path: Optional[str] = None,
+    force: bool = False,
+    verbose: bool = True,
+) -> str:
     """
     Automatically run HW scraper if output doesn't exist in update folder.
 
@@ -122,7 +132,10 @@ def auto_scrape_if_needed(week: int = None, league_type: str = 'weekly',
     Returns:
         str: Path to the HW scraper output file
     """
-    data_path = data_path or DEFAULT_PATHS['update_dir']
+    if week is None:
+        raise ValueError(f"Week number is required for HW scraping ({league_type})")
+
+    data_path = data_path or DEFAULT_PATHS["update_dir"]
 
     # Check if file already exists
     if not force and check_hw_scraper_output_exists(week, league_type, data_path):

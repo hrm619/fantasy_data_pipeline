@@ -1,4 +1,3 @@
-
 import sys
 import os
 import json
@@ -8,7 +7,10 @@ sys.path.append(os.path.dirname(os.path.abspath("")))
 
 # update the player key dict with similar names
 
-def update_player_key_dict(dfs, likely_player_name_columns, player_key_dict_path="../player_key_dict.json", similarity_cutoff=0.95):
+
+def update_player_key_dict(
+    dfs, likely_player_name_columns, player_key_dict_path="../player_key_dict.json", similarity_cutoff=0.95
+):
     """
     Args:
         dfs (list of pandas.DataFrame): List of DataFrames containing player data.
@@ -91,6 +93,6 @@ def update_player_key_dict(dfs, likely_player_name_columns, player_key_dict_path
     else:
         print("No new aliases added.")
 
+
 # Example usage:
 # update_player_key_dict_with_similar_names(dfs, likely_player_name_columns)
-

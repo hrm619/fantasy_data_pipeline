@@ -93,14 +93,14 @@ pytest tests/test_player_utils.py::test_clean_player_names
 # Run with coverage
 pytest --cov=src
 
-# Code formatting
-black src/ scripts/
+# Code formatting (ruff format — black-compatible drop-in)
+ruff format src/ scripts/
 
 # Linting
 ruff check src/ scripts/
 
-# Type checking
-mypy src/
+# Type checking (ty — Astral's checker, replaced mypy)
+uvx ty check src/
 ```
 
 **Test layout** (`tests/`): Unit tests only — no integration/pipeline-run tests yet.
@@ -109,7 +109,7 @@ mypy src/
 - `test_player_utils.py` — name cleaning (Jr suffix, special chars), key mapping load, ID assignment, unknown-player handling
 - `tests/conftest.py` provides fixtures: `tmp_csv`, `tmp_csv_with_metadata`, `tmp_excel`, `tmp_excel_with_readme`, `tmp_player_key`, `sample_player_df`
 
-Note: there is no `[tool.pytest]`/`[tool.ruff]`/`[tool.black]`/`[tool.mypy]` config in `pyproject.toml` — all tools run with defaults.
+Note: `pyproject.toml` configures `[tool.pytest.ini_options]`, `[tool.ruff]`/`[tool.ruff.lint]`, and `[tool.ty]`. Tooling is all-Astral: `uv` (packaging), `ruff check` (lint), `ruff format` (formatting — replaced black; line-length inherited from `[tool.ruff]`), and `ty` (type checking — replaced mypy, run informationally, not yet a CI gate).
 
 ## Architecture Overview
 
@@ -503,7 +503,7 @@ The `src/fantasy_pipeline/scraper/` module is a web scraper that automatically f
 
 ### How It Works
 
-1. **Automatic Triggering**: When running weekly or ROS rankings, the pipeline checks if `hw-week{N}.csv` or `hw-ros.csv` exists in the update folder
+1. **Automatic Triggering**: When running weekly or ROS rankings, the pipeline checks if `hw-week{N}.csv` exists in the update folder (weekly and ROS share this filename — keyed on the `--week` you run)
 2. **Smart Scraping**: If the file doesn't exist, the scraper automatically:
    - Constructs the URL based on week number (e.g., `week-8-fantasy-football-rankings-the-blueprint-2025`)
    - Fetches the article from Underdog Network using HTTP requests
@@ -513,7 +513,7 @@ The `src/fantasy_pipeline/scraper/` module is a web scraper that automatically f
    - Handles Unicode characters (curly quotes like `'` instead of `'`)
    - Matches player names to standardized IDs using fuzzy matching (85% threshold)
    - Extracts analysis/details text for each player
-   - Saves output to `data/rankings current/update/hw-week{N}.csv` or `hw-ros.csv`
+   - Saves output to `data/rankings current/update/hw-week{N}.csv` (both weekly and ROS)
 3. **Skip on Exists**: If the file already exists, scraping is skipped (prevents redundant network calls)
 4. **Graceful Failure**: If scraping fails, the pipeline continues with existing files
 
@@ -592,6 +592,6 @@ df.to_csv("hw-week7.csv", index=False)
 - If 0 players scraped, inspect page source to verify text content structure hasn't changed
 
 **Missing HW Rankings Data**:
-- Verify scraped file was created in update folder (check for `hw-week{N}.csv` or `hw-ros.csv`)
+- Verify scraped file was created in update folder (check for `hw-week{N}.csv`)
 - Check `src/fantasy_pipeline/data/loader.py` CSV header detection (handles files with metadata rows)
 - Ensure BaseProcessor doesn't recalculate POS RANK when already present from scraper

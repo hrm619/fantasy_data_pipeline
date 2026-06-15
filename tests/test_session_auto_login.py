@@ -14,17 +14,17 @@ def test_valid_session_skips_login(monkeypatch):
     monkeypatch.setattr(auth, "login", lambda *a, **k: logins.append(1))
 
     assert fr.ensure_session("pff") is True
-    assert logins == []                         # never opened a login window
+    assert logins == []  # never opened a login window
 
 
 def test_invalid_session_triggers_login_then_revalidates(monkeypatch):
-    states = iter([False, True])                 # expired, then valid after login
+    states = iter([False, True])  # expired, then valid after login
     monkeypatch.setattr(fr, "validate_session", lambda s: next(states))
     logins = []
     monkeypatch.setattr(auth, "login", lambda s, **k: logins.append(s))
 
     assert fr.ensure_session("fpts") is True
-    assert logins == ["fpts"]                    # opened the login window once
+    assert logins == ["fpts"]  # opened the login window once
 
 
 def test_no_autologin_returns_false_without_login(monkeypatch):
