@@ -11,11 +11,14 @@ import pandas as pd
 import re
 import json
 import os
+
 try:
     from rapidfuzz import fuzz
+
     HAS_RAPIDFUZZ = True
 except ImportError:
     from difflib import SequenceMatcher
+
     HAS_RAPIDFUZZ = False
 
 
@@ -60,9 +63,9 @@ def load_player_key():
     # Need to go up 3 levels: scraper/ -> fantasy_pipeline/ -> src/ -> project_root/
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-    key_path = os.path.join(project_root, 'player_key_dict.json')
+    key_path = os.path.join(project_root, "player_key_dict.json")
 
-    with open(key_path, 'r') as f:
+    with open(key_path, "r") as f:
         return json.load(f)
 
 
@@ -146,18 +149,16 @@ def scrape_fantasy_rankings(url):
             - Details: Analysis text for the player
     """
     # Fetch the webpage
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     response = requests.get(url, headers=headers)
     response.raise_for_status()
 
     # Parse HTML
-    soup = BeautifulSoup(response.content, 'html.parser')
+    soup = BeautifulSoup(response.content, "html.parser")
 
     # Try to find the post body section using CSS selector
     # The rankings start at a specific h1 element in the post body
-    post_body = soup.select_one('div.styles_postLayoutBody__MYNJ_')
+    post_body = soup.select_one("div.styles_postLayoutBody__MYNJ_")
 
     if post_body:
         # Get text from the post body section
@@ -174,14 +175,14 @@ def scrape_fantasy_rankings(url):
     # Split content by position headers
     # Updated to handle both "Week X RB Rankings" and "RB Rankings" patterns
     position_sections = {}
-    for pos in ['RB', 'WR', 'TE', 'QB']:
+    for pos in ["RB", "WR", "TE", "QB"]:
         # Try "Week X {POS} Rankings" first
-        pattern = rf'Week \d+ {pos} Rankings(.*?)(?=Week \d+ (?:RB|WR|TE|QB) Rankings|Week \d+ Fantasy DEFs|$)'
+        pattern = rf"Week \d+ {pos} Rankings(.*?)(?=Week \d+ (?:RB|WR|TE|QB) Rankings|Week \d+ Fantasy DEFs|$)"
         match = re.search(pattern, content, re.DOTALL)
 
         if not match:
             # Fallback: try just "{POS} Rankings"
-            pattern = rf'{pos} Rankings(.*?)(?=(?:RB|WR|TE|QB) Rankings|Fantasy DEFs|$)'
+            pattern = rf"{pos} Rankings(.*?)(?=(?:RB|WR|TE|QB) Rankings|Fantasy DEFs|$)"
             match = re.search(pattern, content, re.DOTALL)
 
         position_sections[pos] = match
@@ -206,14 +207,27 @@ def scrape_fantasy_rankings(url):
             # Clean up player names by removing common contaminating prefixes
             # These are team names, acronyms, or other words that appear before actual player names
             contaminating_prefixes = [
-                'NFL. ', 'NFL.', 'Giants. ', 'Giants.', 'Lions. ', 'Lions.',
-                'Panthers. ', 'Panthers.', 'WRs. ', 'WRs.', 'Saints. ', 'Saints.',
-                'Bengals. ', 'Bengals.', 'Tonges. ', 'Tonges.'
+                "NFL. ",
+                "NFL.",
+                "Giants. ",
+                "Giants.",
+                "Lions. ",
+                "Lions.",
+                "Panthers. ",
+                "Panthers.",
+                "WRs. ",
+                "WRs.",
+                "Saints. ",
+                "Saints.",
+                "Bengals. ",
+                "Bengals.",
+                "Tonges. ",
+                "Tonges.",
             ]
 
             for prefix in contaminating_prefixes:
                 if player_name.startswith(prefix):
-                    player_name = player_name[len(prefix):]
+                    player_name = player_name[len(prefix) :]
                     break
 
             # Handle concatenated names: if any word has multiple capitals and isn't Mc/Mac, split and take last part
@@ -222,14 +236,14 @@ def scrape_fantasy_rankings(url):
             for word in words:
                 # Count capitals - if more than expected for Mc/Mac names, it's likely concatenated
                 capitals = [i for i, c in enumerate(word) if c.isupper()]
-                if len(capitals) >= 2 and not word.startswith(('Mc', 'Mac', 'St.', 'De')):
+                if len(capitals) >= 2 and not word.startswith(("Mc", "Mac", "St.", "De")):
                     # Look for pattern: lowercase then uppercase (concatenation point)
                     for i in range(len(word) - 1):
-                        if word[i].islower() and word[i+1].isupper():
-                            word = word[i+1:]
+                        if word[i].islower() and word[i + 1].isupper():
+                            word = word[i + 1 :]
                             break
                 cleaned_words.append(word)
-            player_name = ' '.join(cleaned_words)
+            player_name = " ".join(cleaned_words)
 
             matches.append((player_name.strip(), yards_stat, match.start(), match.end()))
 
@@ -245,26 +259,28 @@ def scrape_fantasy_rankings(url):
             if prev_end > 0:
                 details_text = section_text[prev_end:match_start].strip()
                 # Clean up details - remove Underdog Pick'em references and excess whitespace
-                details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", '', details_text)
-                details_text = re.sub(r'\s+', ' ', details_text).strip()
+                details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", "", details_text)
+                details_text = re.sub(r"\s+", " ", details_text).strip()
                 # Remove leading periods and spaces
-                details_text = details_text.lstrip('. ')
+                details_text = details_text.lstrip(". ")
 
                 if player_entries:
-                    player_entries[-1]['Details'] = details_text
+                    player_entries[-1]["Details"] = details_text
 
             # Match player name to player key
             player_id, standardized_name = match_player_name(player_name, player_key)
 
-            player_entries.append({
-                'Player Name': player_name,
-                'Player ID': player_id,
-                'Standardized Name': standardized_name,
-                'Position': position,
-                'Position Rank': rank,
-                'Yards Stat': yards_stat,
-                'Details': ''  # Will be filled by next iteration
-            })
+            player_entries.append(
+                {
+                    "Player Name": player_name,
+                    "Player ID": player_id,
+                    "Standardized Name": standardized_name,
+                    "Position": position,
+                    "Position Rank": rank,
+                    "Yards Stat": yards_stat,
+                    "Details": "",  # Will be filled by next iteration
+                }
+            )
 
             prev_end = match_end
             rank += 1
@@ -273,18 +289,18 @@ def scrape_fantasy_rankings(url):
         if player_entries and prev_end > 0:
             remaining_text = section_text[prev_end:].strip()
             # Look for the next player name pattern or end of section
-            next_section = re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z\'-]+)+)\s*-\s*[\d.]+\s+', remaining_text)
+            next_section = re.search(r"([A-Z][a-z]+(?:\s+[A-Z][a-z\'-]+)+)\s*-\s*[\d.]+\s+", remaining_text)
             if next_section:
-                details_text = remaining_text[:next_section.start()].strip()
+                details_text = remaining_text[: next_section.start()].strip()
             else:
                 # Take up to 1000 chars or until we hit another obvious section marker
                 details_text = remaining_text[:1000].strip()
 
-            details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", '', details_text)
-            details_text = re.sub(r'\s+', ' ', details_text).strip()
+            details_text = re.sub(r"Underdog\s+Pick['\u2019]em\.?", "", details_text)
+            details_text = re.sub(r"\s+", " ", details_text).strip()
             # Remove leading periods and spaces
-            details_text = details_text.lstrip('. ')
-            player_entries[-1]['Details'] = details_text
+            details_text = details_text.lstrip(". ")
+            player_entries[-1]["Details"] = details_text
 
         players_data.extend(player_entries)
 

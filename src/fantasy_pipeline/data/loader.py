@@ -4,11 +4,12 @@ Data loading utilities for fantasy football data processing.
 Simplified version of the original load_data function.
 """
 
+from typing import Optional
+
 import pandas as pd
-import os
 
 
-def load_data(filepath: str, header_row: int = None, sheet_name: str = None) -> pd.DataFrame:
+def load_data(filepath: str, header_row: Optional[int] = None, sheet_name: Optional[str] = None) -> pd.DataFrame:
     """
     Load a file into a pandas DataFrame based on its extension.
     Supports CSV and Excel (xlsx) files.
@@ -26,14 +27,14 @@ def load_data(filepath: str, header_row: int = None, sheet_name: str = None) -> 
     Raises:
         ValueError: If the file extension is not supported.
     """
-    if filepath.lower().endswith('.csv'):
+    if filepath.lower().endswith(".csv"):
         # Handle CSV files with flexible header row detection
         if header_row is not None:
             return pd.read_csv(filepath, header=header_row)
         else:
             # Auto-detect header row for CSV files
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     lines = []
                     for i, line in enumerate(f):
                         lines.append(line.strip())
@@ -45,8 +46,8 @@ def load_data(filepath: str, header_row: int = None, sheet_name: str = None) -> 
                 max_fields = 0
 
                 for i, line in enumerate(lines):
-                    if line and ',' in line:
-                        field_count = len(line.split(','))
+                    if line and "," in line:
+                        field_count = len(line.split(","))
                         if field_count > max_fields:
                             max_fields = field_count
                             header_row_idx = i
@@ -64,9 +65,9 @@ def load_data(filepath: str, header_row: int = None, sheet_name: str = None) -> 
                     return pd.read_csv(filepath)
                 except pd.errors.ParserError:
                     # Last resort - skip bad lines
-                    return pd.read_csv(filepath, on_bad_lines='skip')
+                    return pd.read_csv(filepath, on_bad_lines="skip")
 
-    elif filepath.lower().endswith(('.xlsx', '.xls')):
+    elif filepath.lower().endswith((".xlsx", ".xls")):
         # If sheet_name explicitly provided, use it directly
         if sheet_name is not None:
             return pd.read_excel(filepath, sheet_name=sheet_name)

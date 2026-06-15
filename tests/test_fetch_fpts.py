@@ -75,6 +75,7 @@ def _has_chromium():
 
 def _has_fpts_session():
     from fantasy_pipeline.scraper.auth import storage_state_path
+
     return storage_state_path("fpts").exists()
 
 

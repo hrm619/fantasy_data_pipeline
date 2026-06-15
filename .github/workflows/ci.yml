@@ -21,16 +21,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package with dev dependencies
+      - name: Install package with dev + headless dependencies
         # setup-uv already provisions the Python + virtual environment.
-        run: uv pip install -e ".[dev]"
+        # headless (playwright) is included so `ty` can resolve the optional
+        # scraper imports in fetch_rankings.py; browser binaries are NOT installed
+        # (`playwright install` is unnecessary for type-checking and the tests).
+        run: uv pip install -e ".[dev,headless]"
 
       - name: Lint (ruff)
         run: uv run ruff check src/ scripts/ tests/
 
+      - name: Format check (ruff format)
+        run: uv run ruff format --check src/ scripts/ tests/
+
+      - name: Type check (ty)
+        run: uv run ty check src/
+
       - name: Test (pytest)
         run: uv run pytest
-
-      - name: Type check (mypy, informational)
-        run: uv run mypy src/
-        continue-on-error: true
