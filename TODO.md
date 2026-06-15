@@ -43,13 +43,11 @@ one-time `ff-rankings login <source>`).**
   CLI `--year` defaults, and the HW URL slug all derive from it. Bumping 2025→2026 is now a one-line
   change. Behavior is byte-identical at 2025; locked by `tests/test_config.py` (re-hardcoding fails CI).
   *Note: live `fp`/`adp` data is already 2026-season — bump `CURRENT_SEASON` when the 2026 source files land.*
-- ✅ **Verify the manual-source guide** (`docs/auto-ranking-refresh-assessment/manual_source_guide.md`)
-  for #5–#7 — filenames/scoring/sheet names checked against `COLUMN_MAPPINGS`/`FILE_MAPPINGS`; added the
-  per-source expected-columns lists, JJ per-league prefixes, and the PFF weekly/ROS second-row-header note.
-- ✅ **Reconcile `docs/auto-ranking-refresh-assessment/`** with reality — fixed the stale claims (DS/fp
-  now automated, not manual/deferred), corrected the ADP count (989→~411 consensus), and documented the
-  `ecrData` JSON + headless-Playwright approaches actually shipped. *Note: these two files are duplicated
-  at `docs/` root (in-flight reorg) — I synced both copies; pick one canonical location when convenient.*
+- ✅ **Docs refreshed altogether** (2026-06-15) — the stale source docs (`DATA_SOURCES.md`,
+  `WEEKLY_RANKINGS_SETUP.md`, the `manual_source_guide`/`source_feasibility` pair, the
+  `auto-ranking-refresh-assessment/` dir, and the historical `docs/development/` summaries) were replaced
+  by current, accurate docs: [`docs/data-sources.md`](docs/data-sources.md), [`docs/usage.md`](docs/usage.md),
+  a rewritten [`docs/api/source-library.md`](docs/api/source-library.md), and a refreshed `docs/README.md`.
 
 ---
 

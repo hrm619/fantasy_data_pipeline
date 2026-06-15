@@ -3,10 +3,10 @@
 **Goal:** move each ranking source from "manual download" toward "automated fetch that drops
 directly into `data/rankings current/update/` in the exact schema the pipeline expects."
 
-**Last verified:** 2026-06-14 (live fetch test + code review). See
-`docs/auto-ranking-refresh-assessment/` for the original feasibility investigation.
+**Last verified:** 2026-06-15. User-facing docs: [`docs/data-sources.md`](docs/data-sources.md)
+and [`docs/usage.md`](docs/usage.md).
 
-**Active backlog:** [`TODO.md`](TODO.md) — next task is automating the paywalled sources (#5–#7).
+**Active backlog:** [`TODO.md`](TODO.md). All seven sources are automated; see the status below.
 
 ## How to use this doc
 - We work **one source at a time**, top of the priority list down.
@@ -299,8 +299,9 @@ page is `/nfl/rankings/redraft` (an SPA at `#/`). `/nfl/rankings/redraft` + the 
 ---
 
 ## Cross-cutting cleanup (track separately)
-- ⬜ Reconcile `docs/auto-ranking-refresh-assessment/` with reality (remove the nonexistent
-  `ff-rankings fetch-adp` claim until built; fix "989 players" → current count; mark DS status).
+- ✅ Docs refreshed (2026-06-15): the stale `docs/auto-ranking-refresh-assessment/`, `DATA_SOURCES.md`,
+  and `WEEKLY_RANKINGS_SETUP.md` were replaced by current docs — [`docs/data-sources.md`](docs/data-sources.md),
+  [`docs/usage.md`](docs/usage.md), and a rewritten API reference.
 - ✅ Season-rollover audit (2026-06-15): `CURRENT_SEASON` in `config.py` is now the single source of
   truth — `FILE_MAPPINGS` `fp`/`adp` prefixes + ROS `fpts` pattern, both fetcher `year` defaults, the
   CLI `--year` defaults, and `get_hw_scraper_url`'s slug all derive from it. Byte-identical at 2025;

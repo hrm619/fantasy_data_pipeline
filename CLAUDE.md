@@ -354,19 +354,19 @@ scripts/
 └── update_player_key.py     # Player key maintenance tools
 
 docs/
-├── api/source-library.md       # Complete API reference
-├── manual_source_guide.md      # How to manually download each ranking source (URLs, logins, filenames)
-├── source_feasibility.md       # Which sources can be auto-fetched vs. require manual download
-└── development/                # Architecture documentation
+├── README.md                   # Docs index
+├── usage.md                    # Install → fetch → login → consolidate; league types
+├── data-sources.md             # The 7 sources: automated vs manual, fetch-*/login/refresh-all, schemas
+└── api/source-library.md       # fantasy_pipeline package API reference
 
 tests/
 ├── conftest.py              # Shared pytest fixtures (temp CSV/Excel/player-key files)
-├── test_rankings_processor.py
-├── test_data_loader.py
-└── test_player_utils.py
+├── test_rankings_processor.py · test_data_loader.py · test_player_utils.py · test_config.py
+├── test_fetch_rankings.py · test_fetch_draftsharks.py · test_fetch_pff.py · test_fetch_fpts.py · test_fetch_jj.py
+└── test_auth.py · test_session_auto_login.py · test_refresh_all.py · test_hw_scraper.py
 ```
 
-Other top-level docs not in `docs/`: `DATA_SOURCES.md`, `HW_SCRAPER_IMPROVEMENTS.md`, `WEEKLY_RANKINGS_SETUP.md`. Notebooks for exploratory work live in `notebooks/` (`ff-data.ipynb`, `ff-player-key.ipynb`, `ff-rankings.ipynb`).
+Notebooks for exploratory work live in `notebooks/` (`ff-data.ipynb`, `ff-player-key.ipynb`, `ff-rankings.ipynb`).
 
 ## Python Package Usage
 

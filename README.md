@@ -19,11 +19,11 @@ A comprehensive Python pipeline for processing fantasy football rankings data fr
 
 Complete documentation is available in the repository:
 
-- **[📖 API Reference](docs/api/source-library.md)** - Complete source library documentation
-- **[🛠 Development Docs](docs/development/)** - Architecture and consolidation details
-- **[🌐 Data Sources](DATA_SOURCES.md)** - Complete list of data source URLs and export instructions
-- **[💻 Claude Code Guide](CLAUDE.md)** - Development patterns and architecture for AI assistants
-- **[📝 Documentation Index](docs/README.md)** - Full documentation navigation
+- **[📝 Documentation Index](docs/README.md)** - Start here
+- **[▶️ Usage](docs/usage.md)** - Install, fetch sources, log in, and consolidate
+- **[🌐 Data Sources](docs/data-sources.md)** - The 7 ranking sources, automated vs. manual, and the `fetch-*` commands
+- **[📖 API Reference](docs/api/source-library.md)** - The `fantasy_pipeline` package
+- **[💻 Claude Code Guide](CLAUDE.md)** - Architecture, patterns, and conventions
 
 ## 🆕 Recent Updates (October 26, 2024)
 
@@ -119,7 +119,7 @@ The pipeline integrates data from six primary ranking sources:
 - **Hayden Winks**: Expert rankings with HPPR projections *(auto-scraped for weekly/ROS)*
 - **PFF (Pro Football Focus)**: Rankings and projections
 
-For complete data source URLs, export instructions, and file naming conventions, see **[DATA_SOURCES.md](DATA_SOURCES.md)**.
+For the full source list, the `fetch-*`/`login`/`refresh-all` commands, and file naming conventions, see **[docs/data-sources.md](docs/data-sources.md)**.
 
 ### Automated Web Scraping
 

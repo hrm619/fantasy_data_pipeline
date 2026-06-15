@@ -1,47 +1,19 @@
-# Fantasy Football Data Pipeline - Documentation
+# Documentation
 
-Welcome to the complete documentation for the Fantasy Football Data Pipeline project.
+Documentation for the `fantasy_data_pipeline` — a multi-source fantasy football rankings
+processor. Start with the repo root [`README.md`](../README.md) for the overview.
 
-## 📚 **Documentation Structure**
+## Contents
 
-### 🚀 **Getting Started**
-- [Main Project README](../README.md) - Project overview and quick start
+- **[Usage](usage.md)** — install, fetch sources, log in, and consolidate; league types and output.
+- **[Data Sources](data-sources.md)** — the seven ranking sources, which are automated vs. manual,
+  the `fetch-*` / `login` / `refresh-all` commands, schemas, and saved-session auth.
+- **[API Reference](api/source-library.md)** — the `fantasy_pipeline` package: `RankingsProcessor`,
+  the `return_dataframe` seam, fetchers, auth, and config.
 
-### 📖 **API Documentation**
-- [Source Library Guide](api/source-library.md) - Complete `src/` module documentation
+## See also
 
-### 📝 **User Guides**
-- [Usage Examples](guides/) - Coming soon
-- [Configuration Guide](guides/) - Coming soon
-
-### 🛠 **Development Documentation**
-- [Complete Consolidation Summary](development/COMPLETE_CONSOLIDATION_SUMMARY.md) - Full consolidation overview
-- [Functionality Preservation](development/FUNCTIONALITY_PRESERVATION.md) - How all functionality was maintained
-- [Reorganization Summary](development/REORGANIZATION_SUMMARY.md) - lib/ to src/ move details
-- [Simplification Summary](development/SIMPLIFICATION_SUMMARY.md) - Initial simplification process
-
-## 🎯 **Quick Navigation**
-
-### For Users
-- **New to the project?** Start with the [Main README](../README.md)
-- **Want to use the API?** Check the [Source Library Guide](api/source-library.md)
-- **Need examples?** See the [Usage Examples](guides/) (coming soon)
-
-### For Developers
-- **Understanding the codebase?** Read the [Complete Consolidation Summary](development/COMPLETE_CONSOLIDATION_SUMMARY.md)
-- **Curious about the simplification?** See the [Simplification Summary](development/SIMPLIFICATION_SUMMARY.md)
-- **Want implementation details?** Check [Functionality Preservation](development/FUNCTIONALITY_PRESERVATION.md)
-
-## 📋 **Documentation Standards**
-
-This documentation follows standard Python project conventions:
-- `docs/` - All documentation
-- `docs/api/` - API reference and technical documentation
-- `docs/guides/` - User guides and tutorials
-- `docs/development/` - Development and architecture documentation
-
-## 🔗 **External References**
-
-- [Python Project Documentation Standards](https://docs.python.org/3/tutorial/modules.html)
-- [Sphinx Documentation](https://www.sphinx-doc.org/) - For future automated docs
-- [Read the Docs](https://readthedocs.org/) - For hosting documentation
+- [`CLAUDE.md`](../CLAUDE.md) — architecture, design patterns, conventions, and gotchas (the
+  most detailed reference).
+- [`SCRAPER-PLAN.md`](../SCRAPER-PLAN.md) — per-source automation roadmap and status.
+- [`TODO.md`](../TODO.md) — working backlog.
