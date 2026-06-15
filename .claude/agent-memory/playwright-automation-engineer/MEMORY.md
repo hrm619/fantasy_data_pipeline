@@ -1,0 +1,1 @@
+- [DraftSharks Export](draftsharks-export.md) — capture the full ungated rankings board via Playwright; mobile-viewport gate + which export button to click

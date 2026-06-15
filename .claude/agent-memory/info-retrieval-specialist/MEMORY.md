@@ -1,0 +1,1 @@
+- [Sleeper ADP Sources](source_sleeper_adp.md) — where to get Sleeper redraft ADP; Sleeper API has no ADP, FFCalc JSON is best free option

@@ -229,4 +229,7 @@ credentials.json
 # Backup files
 *.bak
 *.backup
-*~ 
+*~
+
+# Claude Code — keep personal settings local; agents + agent-memory are shared
+.claude/settings.local.json 
