@@ -5,12 +5,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · 🔒 needs cre
 
 ---
 
-## 🔜 NEXT TASK — Automate the paywalled sources (#5–#7)
+## ✅ DONE — Automate the paywalled sources (#5–#7)
 
-The four free/public sources are automated (ADP, DraftSharks, Hayden Winks, FantasyPros rankings).
-The remaining three are behind logins/paywalls and were previously "manual by design." **Next up:
-automate them via authenticated browser sessions** (Playwright, same pattern as the DraftSharks
-fetcher) so the whole `update/` folder can be refreshed with one command.
+All seven ranking sources are now automated. The four free/public ones (ADP, DraftSharks, Hayden Winks,
+FantasyPros rankings) plus the three paywalled ones (FantasyPoints, PFF, JJ) — each `update/` source
+refreshes with one `ff-rankings fetch-*` command. The whole folder can be refreshed in one pass.
 
 **Auth strategy (decided & built):** saved-session. `ff-rankings login <source>` opens a headed browser
 for a one-time manual login; the session persists to `~/.fantasy_pipeline/auth/<source>.json` (outside the
@@ -23,12 +22,17 @@ repo) and headless fetchers reuse it via `scraper/auth.load_storage_state`. No p
 - ✅ **#6 PFF (`pff`)** — saved-session headless export shipped: `ff-rankings login pff` + `ff-rankings
   fetch-pff`. Live-verified 512 players; structurally identical to the manual export; loads to the exact
   `COLUMN_MAPPINGS['pff']` width. Fixture + schema-contract + skip-gated live tests.
-- ⬜ **#7 JJ Zachariason / LateRound (`jj`)** — Patreon-gated Excel attachment. **NEXT** (hardest auth).
-  - Goal: authenticated Patreon download of the latest `Redraft1QB_*.xlsx` ("Rankings and Tiers" sheet).
-  - Patreon login + locating the latest post; may stay manual if auth proves too brittle.
+- ✅ **#7 JJ Zachariason / LateRound (`jj`)** — saved-session Patreon **API** fetch + auto-discovery:
+  `ff-rankings login jj` + `ff-rankings fetch-jj` (no URL needed — finds the latest 1QB redraft post;
+  `--post-url` overrides). Patreon post HTML is Cloudflare-gated, so attachments are read via the JSON API.
+  Source changed to a 5-col CSV (Auction dropped) → adapted to the 6-col `COLUMN_MAPPINGS['jj']` width →
+  `Redraft1QB_<year>.csv`. Live-verified 250 players. Pure-function + schema-contract + skip-gated live tests.
 
 Acceptance for each: fetched file lands in `update/` and `ff-rankings` consumes it end-to-end
 (no column-count mismatch / player-ID crash), with a coverage floor + a network-free schema test.
+
+**✅ #5–#7 COMPLETE — all seven sources now automate via `ff-rankings fetch-*` (paywalled ones behind a
+one-time `ff-rankings login <source>`).**
 
 ---
 

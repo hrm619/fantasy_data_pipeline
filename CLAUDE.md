@@ -450,10 +450,19 @@ Separate from the HW scraper, `fetch_rankings.py` provides HTTP fetchers for sou
   the DataTables **"Download as CSV"** button → `Scott Barrett <year> Redraft Rankings.csv` (exact 7-col
   `COLUMN_MAPPINGS['fpts']`). CLI: **`ff-rankings fetch-fpts [--output DIR] [--year N] [--min-players N]
   [--url URL]`** (`--url` overrides the rankings page for live re-verification).
+- `fetch_jj(output_dir, post_url=None, year=CURRENT_SEASON, min_players=150)` — **saved-session** fetcher
+  for JJ Zachariason's Patreon-gated 1QB redraft rankings (collection 47664). **Patreon post HTML is
+  Cloudflare-Turnstile gated** for the headless browser, so attachments are read via the Patreon **JSON
+  API** (`/api/posts/<id>?include=attachments_media`), which the session reaches un-gated. By default it
+  **auto-discovers** the latest 1QB redraft post from the collection page (`_jj_is_redraft_title`);
+  `post_url` targets a specific post. The source is now a **5-col CSV** (the old `.xlsx`'s `Auction` column
+  was dropped) — `_jj_adapt_rows` pads it back to the 6-col `COLUMN_MAPPINGS['jj']` width (both `.csv` and
+  `.xlsx` attachments are handled) → `Redraft1QB_<year>.csv`. CLI: **`ff-rankings fetch-jj [--output DIR]
+  [--post-url URL] [--year N] [--min-players N]`**.
 
 ### Saved-session auth for paywalled sources (`scraper/auth.py`)
 
-Paywalled sources (PFF + FantasyPoints done; JJ/Patreon planned) use a **saved-session** strategy — no
+All three paywalled sources (PFF, FantasyPoints, JJ/Patreon) use a **saved-session** strategy — no
 passwords in code or env:
 - **`ff-rankings login <source>`** (`{pff, fpts, jj}`) opens a **headed** browser for a one-time manual
   login (2FA/SSO/OAuth all fine). On Enter, the browser context's cookies/localStorage ("storage state")

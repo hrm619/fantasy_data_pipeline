@@ -43,10 +43,12 @@ Prefix of the filename must match `FILE_MAPPINGS[<league>][<key>]`.
 4. ✅ FantasyPros rankings (`fp`) — shipped via embedded `ecrData` JSON (`ff-rankings fetch-fp`); works year-round
 5. ✅ FantasyPoints / Barrett (`fpts`) — saved-session export shipped (`ff-rankings fetch-fpts`); live-verified 99 players
 6. ✅ PFF (`pff`) — saved-session headless export shipped (`ff-rankings fetch-pff`); live-verified 512 players
-7. ⬜ JJ Zachariason (`jj`) — Patreon; saved-session automation (hardest auth; do last)
+7. ✅ JJ Zachariason (`jj`) — saved-session Patreon API + auto-discovery (`ff-rankings fetch-jj`); live-verified 250 players
 
-**Everything except JJ (#7) is done.** The saved-session auth pattern (`scraper/auth.py` +
-`ff-rankings login`) is established and reusable. Remaining: automate #7 (Patreon — hardest auth).
+**🎉 ALL SEVEN SOURCES ARE AUTOMATED.** Each `update/` source now refreshes with one command
+(`fetch-adp`, `fetch-fp`, `fetch-ds`, weekly/ROS HW auto-scrape, `fetch-fpts`, `fetch-pff`, `fetch-jj`),
+with paywalled sources behind a one-time `ff-rankings login <source>`. Remaining items are cross-cutting
+(doc reconciliation — largely done) and the known loader bug below.
 
 ---
 
@@ -270,11 +272,26 @@ page is `/nfl/rankings/redraft` (an SPA at `#/`). `/nfl/rankings/redraft` + the 
 ---
 
 ## 7. JJ Zachariason — `jj`
-**Status:** 🔒 manual (by design)
-**URL:** Patreon post (subscription)
+**Status:** ✅ shipped & live-verified (2026-06-15) via saved-session Patreon **API** + auto-discovery
+**Code:** `fetch_rankings.fetch_jj` · CLI `ff-rankings fetch-jj` · **Source:** Patreon collection 47664
 
-- Patreon-gated Excel download; cannot automate. **Keep manual** (`Redraft1QB_*.xlsx`, "Rankings and Tiers" sheet).
-- ⬜ Verify manual guide accuracy (filename prefix per league type, sheet name).
+### Implemented (saved-session + Patreon JSON API)
+- **Auth:** shared saved-session pattern — `ff-rankings login jj` → `~/.fantasy_pipeline/auth/jj.json`.
+- **Cloudflare workaround (key discovery):** Patreon **post HTML pages are Cloudflare-Turnstile gated**
+  and flag the headless browser ("Verify you are human"). The Patreon **JSON API** (same session cookies)
+  is **not** gated, so we read attachments via the API (`/api/posts/<id>?include=attachments_media`) instead
+  of clicking HTML. The collection *list* page does load, so we use it for discovery.
+- **Auto-discovery (no URL needed):** `_jj_discover_post_id` loads the collection page, takes the newest
+  post whose title matches 1QB redraft (`_jj_is_redraft_title`: has "1qb" + "redraft"/"season-long", not
+  superflex/ROS/weekly). `--post-url` overrides to target a specific post.
+- **Format change handled:** the attachment is now a **5-col CSV** (`Overall,Player,Position,Pos Rank,Tier`)
+  — the old `.xlsx`'s **Auction column was dropped**. `_jj_adapt_rows` pads 5→6 to the
+  `COLUMN_MAPPINGS['jj']` width (source order already matches), and the fetcher handles both `.csv` and
+  `.xlsx` attachments. Output: **`Redraft1QB_<year>.csv`** (CSV now, not xlsx; prefix still matches).
+- **Live result:** auto-discovered the latest post, **250 players**, loads through `data/loader` to the
+  exact `jj` schema width.
+- **Tests:** `tests/test_fetch_jj.py` — title matcher, post-id parse, csv/xlsx parse, 5→6 adapt, row count,
+  schema-contract guard (browser-free) + a skip-gated live auto-discovery test.
 
 ---
 

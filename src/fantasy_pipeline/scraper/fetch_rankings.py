@@ -5,6 +5,7 @@ with the filename pattern expected by FILE_MAPPINGS in config.py.
 """
 
 import csv
+import io
 import json
 import os
 import re
@@ -685,4 +686,228 @@ def fetch_fpts(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 9
         )
 
     print(f"FantasyPoints fetched: {row_count} players saved to {output_path}")
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# JJ Zachariason / LateRound (Patreon — saved-session API attachment fetcher)
+# ---------------------------------------------------------------------------
+#
+# JJ's redraft rankings are a downloadable attachment on a Patreon post (collection
+# 47664). Two live realities shape this fetcher:
+#   1. Patreon post *pages* are gated by a Cloudflare Turnstile challenge that flags the
+#      headless browser — but the Patreon *JSON API* (same session cookies) is not. So we
+#      read attachments via the API instead of clicking the HTML.
+#   2. The attachment is now a 5-col CSV (`Overall,Player,Position,Pos Rank,Tier`) — the
+#      `Auction` column the old .xlsx had was dropped. We pad it back to the 6-col width
+#      the pipeline renames POSITIONALLY into COLUMN_MAPPINGS['jj'] (source order already
+#      matches: RK, PLAYER NAME, POS, POS RANK, TIER, AUCTION).
+JJ_COLLECTION_URL = "https://www.patreon.com/collection/47664"
+JJ_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+# 6-col output header; the pipeline renames it positionally into COLUMN_MAPPINGS['jj'].
+JJ_OUTPUT_COLUMNS = ["Overall", "Player", "Position", "Pos Rank", "Tier", "Auction"]
+
+
+def _jj_output_filename(year: int) -> str:
+    """Filename matching FILE_MAPPINGS' redraft 'Redraft1QB_' prefix (CSV now, not xlsx)."""
+    return f"Redraft1QB_{year}.csv"
+
+
+def _jj_is_redraft_title(title: str) -> bool:
+    """True if a collection post title is the 1QB redraft (not superflex/ROS/weekly)."""
+    t = (title or "").lower()
+    return (
+        "1qb" in t
+        and ("redraft" in t or "season-long" in t)
+        and not re.search(r"superflex|rest-of-season|weekly", t)
+    )
+
+
+def _jj_post_id_from_url(url: str) -> str | None:
+    """Extract the numeric Patreon post id from a post URL, or None."""
+    m = re.search(r"/posts/(\d+)", url or "")
+    return m.group(1) if m else None
+
+
+def _jj_adapt_rows(rows: list) -> list:
+    """Normalize attachment rows to the 6-col COLUMN_MAPPINGS['jj'] width.
+
+    The current source has 5 cols (no Auction); older xlsx had 6. Pad 5→6 (blank Auction),
+    truncate any extras, and drop spacer rows. Header is row 0.
+    """
+    width = len(JJ_OUTPUT_COLUMNS)  # 6
+    out = []
+    for r in rows:
+        cells = ["" if c is None else c for c in r]
+        if len(cells) == width - 1:
+            cells = cells + [""]          # pad the dropped Auction column
+        if len(cells) >= width:
+            out.append([str(c) for c in cells[:width]])
+        # too-short / blank spacer rows are skipped
+    if len(out) < 2:
+        raise RuntimeError("JJ attachment had no usable rows after adapting to 6 columns")
+    return out
+
+
+def _jj_data_row_count(rows: list) -> int:
+    """Count data rows (after the header) whose first cell is a numeric rank."""
+    return sum(1 for r in rows[1:] if r and str(r[0]).strip().isdigit())
+
+
+def _jj_rows_from_attachment(file_name: str, raw: bytes) -> list:
+    """Parse the downloaded attachment (.csv or .xlsx) into a list of rows."""
+    name = (file_name or "").lower()
+    if name.endswith(".csv"):
+        return list(csv.reader(io.StringIO(raw.decode("utf-8-sig"))))
+    if name.endswith(".xlsx"):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True)
+        try:
+            sheet = "Rankings and Tiers" if "Rankings and Tiers" in wb.sheetnames else wb.sheetnames[-1]
+            return [list(r) for r in wb[sheet].iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    raise RuntimeError(f"Unexpected JJ attachment type: {file_name!r} (want .csv/.xlsx)")
+
+
+def _jj_api_json(context, url: str) -> dict:
+    """GET a Patreon JSON API URL via the session's request context; raise if blocked."""
+    r = context.request.get(url, headers={"Accept": "application/json"})
+    body = r.text()
+    if r.status != 200 or not body.strip().startswith("{"):
+        raise RuntimeError(
+            f"Patreon API returned {r.status} for {url} — the session may have expired "
+            "or be blocked. Re-run `ff-rankings login jj`."
+        )
+    return json.loads(body)
+
+
+def _jj_discover_post_id(page) -> str:
+    """Find the latest 1QB redraft post id from the collection page (newest-first)."""
+    page.goto(JJ_COLLECTION_URL, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(4000)
+    for _ in range(3):  # lazy-loaded list — scroll to surface more posts
+        page.mouse.wheel(0, 4000)
+        page.wait_for_timeout(1200)
+    posts = page.evaluate(
+        r"""() => {
+          const seen = new Set(), out = [];
+          document.querySelectorAll('a[href*="/posts/"]').forEach(a => {
+            const m = (a.getAttribute('href') || '').match(/\/posts\/(\d+)/);
+            if (!m || seen.has(m[1])) return;
+            seen.add(m[1]);
+            out.push({id: m[1], title: (a.innerText || '').replace(/\s+/g, ' ').trim()});
+          });
+          return out;
+        }"""
+    )
+    pick = next((p for p in posts if _jj_is_redraft_title(p["title"])), None)
+    if not pick:
+        raise RuntimeError(
+            "No 1QB redraft post found in the LateRound collection "
+            f"({JJ_COLLECTION_URL}) — pass --post-url with the current post explicitly."
+        )
+    return pick["id"]
+
+
+def _jj_attachment(context, post_id: str) -> tuple:
+    """Return (file_name, download_url) of the post's Redraft1QB .csv/.xlsx attachment."""
+    api = (
+        f"https://www.patreon.com/api/posts/{post_id}"
+        "?include=attachments_media&fields[media]=file_name,download_url,mimetype"
+        "&json-api-version=1.0"
+    )
+    data = _jj_api_json(context, api)
+    media = [m["attributes"] for m in data.get("included", []) if m.get("type") == "media"]
+    target = next(
+        (m for m in media
+         if "redraft1qb" in (m.get("file_name") or "").lower()
+         and (m.get("file_name") or "").lower().endswith((".csv", ".xlsx"))),
+        None,
+    )
+    if not target:
+        raise RuntimeError(
+            f"Post {post_id} has no Redraft1QB .csv/.xlsx attachment "
+            f"(found: {[m.get('file_name') for m in media]})"
+        )
+    return target["file_name"], target["download_url"]
+
+
+def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
+    """Discover (or use) the post, download its Redraft1QB attachment via the API, adapt.
+
+    Returns adapted 6-col rows (header + data). Uses the API for attachments because the
+    Patreon post HTML is Cloudflare-gated for the headless browser.
+    """
+    sync_playwright = _require_playwright()
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # browser binary missing
+            raise RuntimeError(
+                "Could not launch Chromium. Install the browser with:\n"
+                "  playwright install chromium"
+            ) from exc
+        try:
+            context = browser.new_context(
+                accept_downloads=True,
+                storage_state=storage_state,
+                user_agent=JJ_UA,
+                viewport={"width": 1400, "height": 1200},
+            )
+            page = context.new_page()
+            post_id = _jj_post_id_from_url(post_url) if post_url else _jj_discover_post_id(page)
+            if not post_id:
+                raise RuntimeError(f"Could not parse a post id from --post-url {post_url!r}")
+            file_name, download_url = _jj_attachment(context, post_id)
+            raw = context.request.get(download_url).body()
+        finally:
+            browser.close()
+
+    return _jj_adapt_rows(_jj_rows_from_attachment(file_name, raw))
+
+
+def fetch_jj(output_dir: str, post_url: str = None, year: int = CURRENT_SEASON,
+             min_players: int = 150) -> str:
+    """Fetch JJ Zachariason's 1QB redraft rankings from Patreon via a saved session.
+
+    Reuses the session from `ff-rankings login jj` (no password handled). By default it
+    auto-discovers the latest 1QB redraft post in the LateRound collection; pass
+    `post_url` to target a specific post. The attachment is downloaded through the Patreon
+    JSON API (the post HTML is Cloudflare-gated), adapted to the 6-col COLUMN_MAPPINGS['jj']
+    width (the current source dropped the Auction column), and written as a CSV.
+
+    Args:
+        output_dir: Directory to save the CSV (the pipeline's update/ folder).
+        post_url: Optional Patreon post URL; if omitted, the latest 1QB redraft post is found.
+        year: Season year for the filename.
+        min_players: Coverage floor — raise if fewer rows are found (the board is ~250).
+
+    Returns:
+        Path to the saved CSV file ('Redraft1QB_<year>.csv').
+
+    Raises:
+        RuntimeError: if there is no saved session, Playwright/Chromium is unavailable, the
+            session is blocked, no redraft post/attachment is found, or coverage is low.
+    """
+    from fantasy_pipeline.scraper.auth import load_storage_state
+
+    storage_state = load_storage_state("jj")
+    rows = _jj_fetch_rows(storage_state, post_url)
+    count = _jj_data_row_count(rows)
+    if count < min_players:
+        raise RuntimeError(
+            f"Only {count} JJ players found (expected >= {min_players}); "
+            "the session may have expired or the wrong attachment was downloaded"
+        )
+
+    output_path = os.path.join(output_dir, _jj_output_filename(year))
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+
+    print(f"JJ fetched: {count} players saved to {output_path}")
     return output_path

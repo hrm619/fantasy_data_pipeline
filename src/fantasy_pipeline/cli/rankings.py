@@ -164,6 +164,37 @@ def _fetch_pff_command(argv) -> int:
         return 1
 
 
+def _fetch_jj_command(argv) -> int:
+    """Fetch JJ Zachariason's redraft xlsx into the update folder (`ff-rankings fetch-jj`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
+    from fantasy_pipeline.scraper.fetch_rankings import fetch_jj
+
+    parser = argparse.ArgumentParser(
+        prog='ff-rankings fetch-jj',
+        description="Download JJ Zachariason's Patreon redraft xlsx (saved session) into the update folder"
+    )
+    parser.add_argument(
+        '--output',
+        default=DEFAULT_PATHS['update_dir'],
+        help='Directory to save the JJ xlsx (default: the pipeline update folder)'
+    )
+    parser.add_argument('--post-url', default=None,
+                        help='Specific Patreon post URL (default: auto-discover the latest 1QB redraft)')
+    parser.add_argument('--year', type=int, default=CURRENT_SEASON, help='Season year for the filename')
+    parser.add_argument('--min-players', type=int, default=150,
+                        help='Coverage floor — fail if fewer players are found (default: 150)')
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_jj(ns.output, post_url=ns.post_url, year=ns.year, min_players=ns.min_players)
+        print(f"\n✅ JJ rankings saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching JJ rankings: {e}")
+        return 1
+
+
 def _fetch_fpts_command(argv) -> int:
     """Fetch FantasyPoints (Scott Barrett) rankings into the update folder (`ff-rankings fetch-fpts`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
@@ -246,6 +277,9 @@ def main(args=None):
         # Additive subcommand: `ff-rankings fetch-fpts ...` (FantasyPoints/Scott Barrett export)
         if argv and argv[0] == 'fetch-fpts':
             return _fetch_fpts_command(argv[1:])
+        # Additive subcommand: `ff-rankings fetch-jj ...` (JJ Zachariason Patreon xlsx)
+        if argv and argv[0] == 'fetch-jj':
+            return _fetch_jj_command(argv[1:])
         args = _build_rankings_parser().parse_args(argv)
 
     # Validate week parameter for weekly and ROS league types

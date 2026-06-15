@@ -55,16 +55,17 @@ must start with the prefix shown below. Season-specific prefixes derive from `CU
 - **Manual fallback:** https://www.pff.com/fantasy/rankings/draft → Export/Download (subscription required).
 - **Note (weekly/ROS):** the PFF export has a title row above the real header — the loader handles it.
 
----
-
-## Manual Sources (paywalled — automation tracked as TODO #7)
-
-### JJ Zachariason / LateRound (jj)
-- **URL:** https://www.patreon.com/posts/ (latest ranking post; subscription required)
-- **Export:** Download the attached Excel file from the Patreon post.
-- **Filename (redraft):** Must start with `Redraft1QB_` (e.g., `Redraft1QB_2025.xlsx`). Other league types
-  use different prefixes — bestball `1QBRankings_`, ROS `ROSRankings_`, weekly `Week{N}_RankingsTiers`.
-- **Format:** Excel file with a **"Rankings and Tiers"** sheet.
+### JJ Zachariason / LateRound (jj) — ✅ now automated via saved session
+- **One-time login:** `ff-rankings login jj` (Patreon; session saved to `~/.fantasy_pipeline/auth/jj.json`).
+- **Fetch:** `ff-rankings fetch-jj` — auto-discovers the latest 1QB redraft post in the LateRound
+  collection (47664) and downloads its attachment via the Patreon **JSON API** (post HTML is
+  Cloudflare-gated). `--post-url` targets a specific post.
+- **Filename (redraft):** `Redraft1QB_<year>.csv` (matches the `Redraft1QB_` prefix).
+- **Format note:** the source is now a **5-col CSV** (`Overall, Player, Position, Pos Rank, Tier`) — the
+  old `.xlsx`'s `Auction` column was dropped; the fetcher pads it back to the 6-col pipeline schema.
+- **Manual fallback:** download the attachment from the latest LateRound 1QB redraft Patreon post.
+- **Other league types** still use different prefixes — bestball `1QBRankings_`, ROS `ROSRankings_`,
+  weekly `Week{N}_RankingsTiers` (not yet automated; redraft only).
 
 ---
 
