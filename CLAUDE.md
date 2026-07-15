@@ -381,6 +381,11 @@ source is unavailable or its data is untrustworthy; prefer it over shipping bad 
 
 ### Data Source URLs
 
+**Redraft ADP:**
+- **adp (DraftSharks)**: https://www.draftsharks.com/adp/half-ppr/sleeper/12 — the Sleeper 12-team half-PPR
+  board. The URL's `<scoring>/<source>/<teams>` path is the source of truth for *which* board is meant; the
+  numeric ids the export needs are resolved client-side (see `fetch_draftsharks_adp`).
+
 **ROS Rankings:**
 - **fp (FantasyPros)**: https://www.fantasypros.com/nfl/rankings/ros-half-point-ppr-overall.php?signedin
 - **fpts (Fantasy Points)**: https://www.fantasypoints.com/nfl/rankings/rest-of-season/rb-wr-te?season=2025#/
@@ -539,21 +544,40 @@ The `data` subpackage (`from fantasy_pipeline.data import ...`) exports `load_da
 ### Standalone Source Fetchers (`scraper/fetch_rankings.py`)
 
 Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draft sources:
-- `fetch_fantasypros_adp(output_dir, year=CURRENT_SEASON, min_players=200)` — **saved-session** fetcher for
-  the FantasyPros consensus ADP (~412 players), writing the **7-column `COLUMN_MAPPINGS['adp']` schema**
-  directly → `FantasyPros_{year}_Overall_ADP_Rankings.csv`. CLI: **`ff-rankings fetch-adp [--output DIR]
-  [--year N] [--min-players N] [--auto-login]`**. Per-platform ADP (e.g. Sleeper) is not exposed — only the
-  consensus AVG.
-  - **Registration-fenced (2026)**: the page no longer renders an HTML `<table>`; the report is embedded as
-    a **`window.FP.reportConfig = {...}` JSON blob** (the same migration the rankings page made to `ecrData`),
-    carrying `registrationFence: true`. Anonymous requests get a **5-row teaser** — across *every* scoring,
-    position, and past-season variant — so the fetcher needs the **free** `fp` account
-    (`ff-rankings login fp`). The parser raises a login instruction rather than emitting a 5-player board.
-  - Extraction uses `json.JSONDecoder().raw_decode` (brace matching), **not** a non-greedy `(\{.*?\});`
-    regex like `ecrData`'s: the blob nests braces and `};` inside strings, so a lazy match can stop early.
+- `fetch_draftsharks_adp(output_dir, year=CURRENT_SEASON, source="sleeper", scoring="half-ppr", teams=12,
+  min_players=200)` — **saved-session** fetcher for **DraftSharks' Sleeper 12-team half-PPR ADP**
+  (<https://www.draftsharks.com/adp/half-ppr/sleeper/12>, ~287 players), writing the **7-column
+  `COLUMN_MAPPINGS['adp']` schema** → `DraftSharks_{year}_Sleeper_ADP.csv`. CLI: **`ff-rankings fetch-adp
+  [--output DIR] [--year N] [--source S] [--scoring S] [--teams N] [--min-players N] [--auto-login]`**.
+  Uses the **`ds`** session — the same account as `fetch-ds` (this replaced the FantasyPros consensus ADP,
+  which was expert-consensus, not the platform the league actually drafts on).
+  - **ADP arrives as `round.pick`, not an overall pick.** DraftSharks publishes `1.10` meaning "round 1,
+    pick 10". It is *numeric-looking and wrong*: `float('1.10') == 1.1` collides with pick 1 and sorts
+    *below* `1.2`. Everything downstream does arithmetic on ADP — `ADP Delta = ADP - avg_RK`,
+    `POS ADP`, and `ADP ROUND = (ADP - 1) // 12 + 1` — so `_round_pick_to_overall` converts to
+    `(round - 1) * teams + pick`, verified against the page's own `overall_pick_number` (318/318 exact).
+    **Sanity-check a fresh file: exactly 12 players in `ADP ROUND` 1**, rounds spanning ~1–25. If ADP
+    ROUND is 1 for nearly everyone, raw round.pick leaked through.
+  - **`teams` is load-bearing twice**: it selects the board *and* converts the picks. It must stay **12**
+    to agree with `ADP ROUND`'s hardcoded 12 in `base_processor.py`. A pick outside `1..teams` raises
+    rather than convert against the wrong league size.
+  - **The `/adp/export` endpoint has NO provenance — never hardcode the board ids.** It labels its ADP
+    column with the `adp1_name` *you* send it (so the header proves nothing), returns a **full, plausible
+    board for a different platform** if `adp1` is wrong (`18::104::12` → 337 rows of someone else), and
+    answers an unknown id with **HTTP 200 + a bare header**. The slug form (`redraft::0::half-ppr::
+    sleeper::12`) returns an empty board — numeric ids are mandatory, and they're resolved **client-side**.
+    So `_read_ds_adp_export_params` reads them off the live page's export link (`a.adp__export-btn`, whose
+    href appears only when logged in) and `_assert_ds_adp_board` asserts DraftSharks' own label names the
+    requested platform + scoring before anything is written. That label is the only trustworthy signal.
+  - **Drops the 31 `TQB` (team-QB) aggregate rows.** Each is named after a team, so it collides with that
+    team's `DEF` row — `Detroit Lions` is both TQB @140 and DEF @267. They match nothing today
+    (`player_key_dict` has no team entries) but the board left-merges each source on `PLAYER ID`, so one
+    name claiming two rows is the JaTavion Sanders duplicate-row bug lying in wait.
   - **Do not** substitute the `fp` cheatsheet's `rank_ave` for ADP. Despite the name it is the average
     *expert rank*, not average *draft position*; `ECR ADP Delta` is `ADP - ECR`, so feeding an ECR-derived
     value in as ADP drives that metric to ~0 by construction and silently destroys the divergence signal.
+    Same reasoning killed the old FantasyPros consensus ADP as the source: it is a *consensus of experts*,
+    which is not what "average draft position on Sleeper" means.
 - `fetch_fantasypros_rankings(output_dir, year=2025, scoring="ppr", min_players=200)` — parses the
   **embedded `ecrData` JSON** from the FantasyPros cheatsheet page (works year-round; the
   `/rankings/*-overall.php` table 302-redirects in the offseason) and writes the **8-column
@@ -627,6 +651,7 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
 ### Saved-session auth for account-gated sources (`scraper/auth.py`)
 
 **Five of the six draft fetchers now need an account** — only `fp` (expert consensus rankings) is open.
+(`adp` is DraftSharks' Sleeper board now, so it rides the `ds` account rather than the FantasyPros one.)
 `SOURCE_LOGIN_URLS` is the single registry; all use a **saved-session** strategy — no passwords in code or env:
 - **`ff-rankings login <source>`** (`{fp, ds, pff, fpts, jj}`) opens a **headed** browser for a one-time manual
   login (2FA/SSO/OAuth all fine). On Enter, the browser context's cookies/localStorage ("storage state")
@@ -634,26 +659,30 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
 - Headless fetchers call `load_storage_state(source)` (raises a friendly "run `ff-rankings login <source>`"
   if absent) and pass it to `browser.new_context(storage_state=...)`.
 - `load_cookies(source, domain_contains=...)` returns `{name: value}` for use with **`requests`** — reuse a
-  session with **no browser** when the page is server-rendered. `fetch-adp` takes this path.
-- **Login keys are per-site, not per-fetcher**: `fp` covers the FantasyPros account, but only the *ADP*
-  report is fenced — `fetch-fp` itself needs no session. `refresh-all` maps `adp → fp` for this reason.
+  session with **no browser** when the page is server-rendered. `fetch-adp` takes this path for the export
+  download itself (it still needs a browser first, only to read the board ids off the rendered page).
+- **Login keys are per-site, not per-fetcher**: `ds` covers both `fetch-ds` and `fetch-adp` (same
+  DraftSharks account), so `refresh-all` maps **`adp → ds`**. `fp` now gates only `ff-stats fetch-weekly`
+  — `fetch-fp` reads the un-fenced cheatsheet and needs no session, which is why `_validate_fp_session`
+  probes the **weekly-leaders** report: validate what the session is actually used for.
 - Override the secrets dir with `FANTASY_PIPELINE_AUTH_DIR`. Re-run `login` when a session expires.
 - Live fetch tests are **skip-gated** on Chromium + a saved session, so CI stays green.
 
 **Gating drifts — check access before debugging parsers.** In the 2026 preseason all three then-broken
-fetchers turned out to be **access changes, not code bugs**: FantasyPros fenced ADP behind free registration,
+fetchers turned out to be **access changes, not code bugs**: FantasyPros fenced its ADP report behind free
+registration,
 DraftSharks deleted its ungated export button, and PFF moved CSV export behind a subscription the saved
 session predated. Symptoms are misleading (a `0 rows` parse error, a `wait_for` timeout, a `download`
 timeout), so probe the live DOM for locks/fences/redirects first.
 
 **Auto-login + session longevity** (so you rarely run `login` manually):
 - **`validate_session(source)`** (in `fetch_rankings.py`) is a cheap live probe — loads the source's page
-  (or hits Patreon's `current_user` API for `jj`, or FantasyPros' ADP JSON for `fp`) and checks for a
+  (or hits Patreon's `current_user` API for `jj`, or the FantasyPros weekly-leaders JSON for `fp`) and checks for a
   logged-in signal. **`ensure_session(source, auto_login=True)`** runs that probe and, if expired, opens the
   headed login window for you, then re-validates.
   - Validators must assert the session is **usable**, not merely present — see the `_validate_pff_session`
-    lock bug above. `_validate_fp_session` checks row count > `FP_ADP_TEASER_ROWS` (not just that the page
-    loads); `_validate_ds_session` requires the `handleExport` control to be **visible**.
+    lock bug above. `_validate_fp_session` checks row count > `FP_WEEKLY_LEADERS_TEASER_ROWS` (not just that
+    the page loads); `_validate_ds_session` requires the `handleExport` control to be **visible**.
 - Pass **`--auto-login`** to `refresh-all` or any gated `fetch-*` to use it: the login window pops
   **only** when a session is actually expired; otherwise the fetch proceeds untouched. No stored passwords.
 - **Sliding sessions:** after each successful authenticated fetch, `auth.save_context_state(context, source)`

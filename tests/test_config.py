@@ -9,7 +9,7 @@ import inspect
 
 from fantasy_pipeline import config as c
 from fantasy_pipeline.scraper.fetch_rankings import (
-    fetch_fantasypros_adp,
+    fetch_draftsharks_adp,
     fetch_fantasypros_rankings,
 )
 
@@ -20,7 +20,7 @@ class TestSeasonCentralization:
         assert c.FILE_MAPPINGS["redraft"]["fp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings")
 
     def test_redraft_adp_prefix_tracks_current_season(self):
-        assert c.FILE_MAPPINGS["redraft"]["adp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Overall_ADP_Rankings")
+        assert c.FILE_MAPPINGS["redraft"]["adp"] == (f"DraftSharks_{c.CURRENT_SEASON}_Sleeper_ADP")
 
     def test_bestball_fp_prefix_tracks_current_season(self):
         assert c.FILE_MAPPINGS["bestball"]["fp"] == (f"FantasyPros_{c.CURRENT_SEASON}_Draft_ALL_Rankings")
@@ -30,7 +30,7 @@ class TestSeasonCentralization:
         assert c.get_ros_file_mappings(6)["fpts"] == [str(c.CURRENT_SEASON)]
 
     def test_fetcher_year_defaults_track_current_season(self):
-        adp_default = inspect.signature(fetch_fantasypros_adp).parameters["year"].default
+        adp_default = inspect.signature(fetch_draftsharks_adp).parameters["year"].default
         fp_default = inspect.signature(fetch_fantasypros_rankings).parameters["year"].default
         assert adp_default == c.CURRENT_SEASON
         assert fp_default == c.CURRENT_SEASON

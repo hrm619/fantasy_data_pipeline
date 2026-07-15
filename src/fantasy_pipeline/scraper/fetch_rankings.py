@@ -13,26 +13,10 @@ from typing import Optional
 
 import requests
 
-from fantasy_pipeline.config import CURRENT_SEASON
+from fantasy_pipeline.config import CURRENT_SEASON, LAST_COMPLETED_SEASON
 
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-
-# Column layout the pipeline's 'adp' source expects (must equal COLUMN_MAPPINGS['adp']).
-# MARKET INDEX / RT are positional placeholders the pipeline discards after the
-# positional rename, so they are emitted blank. ADP holds the consensus AVG.
-ADP_OUTPUT_COLUMNS = ["PLAYER NAME", "TEAM", "BYE", "POS", "ADP", "MARKET INDEX", "RT"]
-
-# FantasyPros' ADP report page. It no longer renders an HTML <table>: the report is
-# embedded as a `window.FP.reportConfig = {...}` JSON blob (same migration the rankings
-# page made to `ecrData`). It is also registration-fenced — see FP_ADP_TEASER_ROWS.
-FP_ADP_URL = "https://www.fantasypros.com/nfl/adp/ppr-overall.php"
-
-# Anonymous visitors get `registrationFence: true` and a short teaser instead of the full
-# board (5 rows as of the 2026 preseason, across every scoring/position/season variant).
-# A logged-in session returns hundreds, so "more than a teaser" is our logged-in signal.
-# Kept generous: this guards against a fence, not an exact row count.
-FP_ADP_TEASER_ROWS = 25
 
 
 def _extract_fp_report_config(html: str) -> dict:
@@ -43,115 +27,12 @@ def _extract_fp_report_config(html: str) -> dict:
     """
     match = re.search(r"window\.FP\.reportConfig\s*=\s*", html)
     if not match:
-        raise RuntimeError("Could not find the reportConfig JSON on the FantasyPros ADP page — layout changed")
+        raise RuntimeError("Could not find the reportConfig JSON on the FantasyPros report page — layout changed")
     try:
         config, _ = json.JSONDecoder().raw_decode(html, match.end())
     except ValueError as exc:
         raise RuntimeError(f"Could not decode the FantasyPros reportConfig JSON: {exc}") from exc
     return config
-
-
-def _split_team_bye(cell: str) -> tuple[str, str]:
-    """Split a reportConfig player's team cell ('DET (6)') into ('DET', '6').
-
-    Falls back to (cell, '') when there's no bye in parentheses (e.g. a free agent).
-    """
-    match = re.match(r"\s*([A-Z]{2,3})\s*\((\d+)\)\s*$", cell or "")
-    if match:
-        return match.group(1), match.group(2)
-    return (cell or "").strip(), ""
-
-
-def _parse_fantasypros_adp(html: str) -> list[dict]:
-    """Parse a FantasyPros ADP page into rows keyed by ADP_OUTPUT_COLUMNS.
-
-    Reads the embedded reportConfig JSON, whose `table.rows` carry:
-        {rank, player: {name, team: 'DET (6)'}, pos: 'RB1', avg: 1.5}
-    The consensus `avg` becomes ADP; MARKET INDEX / RT are left blank (the page no longer
-    exposes per-platform ADP, and the pipeline discards those columns anyway).
-
-    Raises:
-        RuntimeError: if the blob is missing, or the report is registration-fenced (which
-            yields a teaser rather than the full board — the caller needs a session).
-    """
-    config = _extract_fp_report_config(html)
-    rows = config.get("table", {}).get("rows", [])
-
-    if config.get("registrationFence") and len(rows) <= FP_ADP_TEASER_ROWS:
-        raise RuntimeError(
-            f"FantasyPros served a {len(rows)}-player teaser — its ADP report is registration-fenced.\n"
-            "Log in once (a free FantasyPros account) with:\n"
-            "  ff-rankings login fp"
-        )
-
-    players = []
-    for row in rows:
-        player = row.get("player") or {}
-        name = (player.get("name") or "").strip()
-        if not name:
-            continue
-        team, bye = _split_team_bye(player.get("team", ""))
-        players.append(
-            {
-                "PLAYER NAME": name,
-                "TEAM": team,
-                "BYE": bye,
-                "POS": re.sub(r"\d+$", "", str(row.get("pos", "")).strip()),  # 'RB1' -> 'RB'
-                "ADP": str(row.get("avg", "")).strip(),  # consensus AVG
-                "MARKET INDEX": "",
-                "RT": "",
-            }
-        )
-
-    return players
-
-
-def fetch_fantasypros_adp(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 200) -> str:
-    """Fetch FantasyPros consensus ADP and save a pipeline-ready CSV.
-
-    Writes the 7-column layout the pipeline's 'adp' source expects
-    (`FantasyPros_<year>_Overall_ADP_Rankings.csv`), using the consensus AVG as ADP.
-    Per-platform ADP (e.g. Sleeper) is not exposed by the page.
-
-    Requires a saved FantasyPros session (`ff-rankings login fp`) — the report is
-    registration-fenced and serves anonymous visitors a teaser. The page is server-rendered,
-    so this reuses the session's cookies over plain HTTP; no browser is launched.
-
-    Args:
-        output_dir: Directory to save the CSV (the pipeline's update/ folder).
-        year: Season year for the filename (the page always serves the live season).
-        min_players: Coverage floor — raise if fewer rows parse (layout drift guard).
-
-    Returns:
-        Path to the saved CSV file.
-
-    Raises:
-        RuntimeError: if there's no saved session, the report is fenced, or fewer than
-            `min_players` rows parse.
-    """
-    from fantasy_pipeline.scraper.auth import load_cookies
-
-    cookies = load_cookies("fp", domain_contains="fantasypros.com")
-    response = requests.get(FP_ADP_URL, headers={"User-Agent": USER_AGENT}, cookies=cookies, timeout=30)
-    response.raise_for_status()
-
-    players = _parse_fantasypros_adp(response.text)
-    if len(players) < min_players:
-        raise RuntimeError(
-            f"Only {len(players)} players parsed (expected >= {min_players}); "
-            "the FantasyPros session may have expired, or the ADP page layout changed"
-        )
-
-    filename = f"FantasyPros_{year}_Overall_ADP_Rankings.csv"
-    output_path = os.path.join(output_dir, filename)
-
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=ADP_OUTPUT_COLUMNS)
-        writer.writeheader()
-        writer.writerows(players)
-
-    print(f"ADP fetched: {len(players)} players saved to {output_path}")
-    return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -263,22 +144,28 @@ WEEKLY_LEADERS_COLUMNS = ["#", "PLAYER NAME", "POS", "TEAM", *WEEKLY_LEADERS_WEE
 # Scoring -> FantasyPros weekly-leaders report. Half-PPR is what the pipeline uses: the legacy
 # weekly_data.csv matches PFR's FDPT (FanDuel = half-PPR) column exactly.
 #
-# Registration-fenced like the ADP report, so this needs the free `fp` session. Note the fence
-# is easy to misread: `registrationFence` is only present (True) for ANONYMOUS visitors and is
-# ABSENT once logged in — so "fence is None" means "we're authenticated", not "no fence". Judge
-# by row count instead: anonymous returns an 8-row teaser vs ~734 for a full season.
+# Registration-fenced, so this needs the free `fp` session — the only thing that still does
+# now that ADP comes from DraftSharks. Note the fence is easy to misread: `registrationFence`
+# is only present (True) for ANONYMOUS visitors and is ABSENT once logged in — so "fence is
+# None" means "we're authenticated", not "no fence". Judge by row count instead: anonymous
+# returns an 8-row teaser vs ~734 for a full season.
 WEEKLY_LEADERS_URLS = {
     "half-ppr": "https://www.fantasypros.com/nfl/reports/leaders/half-ppr.php",
     "ppr": "https://www.fantasypros.com/nfl/reports/leaders/ppr.php",
     "standard": "https://www.fantasypros.com/nfl/reports/leaders/.php",
 }
 
+# Anonymous visitors get an 8-row teaser; a logged-in session gets ~734 for a full season.
+# Kept generous — this guards against the fence, not an exact row count. Used by
+# _validate_fp_session as the "we're authenticated" signal.
+FP_WEEKLY_LEADERS_TEASER_ROWS = 25
+
 
 def _parse_fp_weekly_leaders(html: str, year: int) -> list[dict]:
     """Parse a FantasyPros weekly-leaders page into WEEKLY_LEADERS_COLUMNS rows.
 
-    Same embedded `window.FP.reportConfig` blob as the ADP report (this page is not
-    registration-fenced). Fields: rank, player{name, team}, pos, games, wk_1..wk_18, avg, points.
+    Reads the embedded `window.FP.reportConfig` blob. Fields: rank, player{name, team}, pos,
+    games, wk_1..wk_18, avg, points.
     """
     config = _extract_fp_report_config(html)
     rows = config.get("table", {}).get("rows", [])
@@ -544,6 +431,275 @@ def fetch_draftsharks(output_dir: str, min_players: int = 150) -> str:
         )
 
     print(f"DraftSharks fetched: {row_count} players saved to {output_path}")
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# DraftSharks ADP (adp) — platform-specific ADP, saved-session
+# ---------------------------------------------------------------------------
+
+# Column layout the pipeline's 'adp' source expects (must equal COLUMN_MAPPINGS['adp']).
+# The rename is POSITIONAL, so order is what matters. BYE / RT are placeholders the
+# processor discards (they're not in STANDARD_OUTPUT_COLUMNS) — DraftSharks' export has
+# no bye column, so BYE is emitted blank rather than faked.
+ADP_OUTPUT_COLUMNS = ["PLAYER NAME", "TEAM", "BYE", "POS", "ADP", "MARKET INDEX", "RT"]
+
+# The ADP board this pipeline drafts against: Sleeper, redraft, half-PPR, 12-team.
+# DS_ADP_TEAMS is load-bearing twice over — it selects the board AND converts DraftSharks'
+# round.pick notation to an overall pick (see _round_pick_to_overall). It also has to stay
+# 12 to agree with BaseProcessor's `ADP ROUND = (ADP - 1) // 12 + 1`, which is hardcoded.
+DS_ADP_SOURCE = "sleeper"
+DS_ADP_SCORING = "half-ppr"
+DS_ADP_TEAMS = 12
+
+DS_ADP_EXPORT_URL = "https://www.draftsharks.com/adp/export"
+
+# The export control on the ADP page. Logged out this renders as `a.adp__export-btn.gated`
+# pointing at /login; logged in, its href carries the selected board's ids.
+_DS_ADP_EXPORT_SELECTOR = "a.adp__export-btn"
+
+# Position of each field in DraftSharks' ADP export, which is:
+#   "Player Name", "Player Team", "Player Position", <adp1_name>, "Market Index 1",
+# Read POSITIONALLY: the 4th header is not a fixed label but an echo of the `adp1_name`
+# query param we send, so it carries no information about what the server actually returned.
+_DS_ADP_NAME_IDX, _DS_ADP_TEAM_IDX, _DS_ADP_POS_IDX, _DS_ADP_ADP_IDX, _DS_ADP_MI_IDX = 0, 1, 2, 3, 4
+_DS_ADP_FIXED_HEADERS = ["Player Name", "Player Team", "Player Position"]
+
+# Positions the pipeline actually drafts. DraftSharks' board also carries aggregate rows
+# that are NOT players — notably 31 `TQB` (team-QB) rows, each named after a team and so
+# sharing its defense's name ('Detroit Lions' appears as both TQB @140 and DEF @267).
+# They match nothing today (player_key_dict holds no team entries), but a name claimed by
+# two ADP rows is a live duplicate-row bug the moment one does: the board left-merges each
+# source on PLAYER ID, so a doubled ID doubles the row — the JaTavion Sanders failure.
+# Drop them at the source rather than leave the landmine armed.
+DS_ADP_FANTASY_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K", "DEF", "DST"})
+
+
+def ds_adp_page_url(source: str = DS_ADP_SOURCE, scoring: str = DS_ADP_SCORING, teams: int = DS_ADP_TEAMS) -> str:
+    """The DraftSharks ADP page for a platform/scoring/league-size combination."""
+    return f"https://www.draftsharks.com/adp/{scoring}/{source}/{teams}"
+
+
+def _round_pick_to_overall(value: str, teams: int) -> Optional[int]:
+    """Convert DraftSharks' round.pick ADP ('2.3') to an overall pick number (15).
+
+    DraftSharks publishes ADP as a draft slot, NOT as a number that means anything
+    arithmetically: '1.10' is round 1 pick 10 (overall 10), yet reads as 1.1 to float() —
+    colliding with '1.1' and sorting below '1.2'. The pipeline needs an overall pick,
+    because it does `ADP Delta = ADP - avg_RK` and `ADP ROUND = (ADP - 1) // 12 + 1`.
+
+    Returns None for a blank/unparseable cell (the caller drops the row) rather than
+    guessing, so a format change surfaces as missing coverage instead of wrong numbers.
+
+    Verified against the ADP page's own `overall_pick_number` field for all 318 players of
+    the Sleeper 12-team half-PPR board: 0 mismatches.
+    """
+    match = re.match(r"^\s*(\d+)\.(\d+)\s*$", value or "")
+    if not match:
+        return None
+    rnd, pick = int(match.group(1)), int(match.group(2))
+    if not 1 <= pick <= teams:
+        # Pick outside 1..teams means this isn't round.pick in a `teams`-sized league.
+        raise RuntimeError(
+            f"DraftSharks ADP '{value}' has a pick number outside 1..{teams} — the board's "
+            f"league size disagrees with teams={teams}, so round.pick cannot be converted."
+        )
+    return (rnd - 1) * teams + pick
+
+
+def _parse_ds_adp_export(text: str, teams: int) -> list[dict]:
+    """Parse DraftSharks' ADP export CSV into ADP_OUTPUT_COLUMNS rows.
+
+    Converts round.pick to an overall pick; rows without a usable ADP are dropped.
+    """
+    rows = list(csv.reader(io.StringIO(text), skipinitialspace=True))
+    if not rows:
+        raise RuntimeError("DraftSharks ADP export was empty")
+
+    header = [h.strip() for h in rows[0]]
+    if header[: len(_DS_ADP_FIXED_HEADERS)] != _DS_ADP_FIXED_HEADERS:
+        raise RuntimeError(
+            f"DraftSharks ADP export layout changed — expected it to start with {_DS_ADP_FIXED_HEADERS}, got {header}"
+        )
+
+    players = []
+    for row in rows[1:]:
+        if len(row) <= _DS_ADP_MI_IDX:
+            continue
+        name = row[_DS_ADP_NAME_IDX].strip()
+        pos = row[_DS_ADP_POS_IDX].strip()
+        adp = _round_pick_to_overall(row[_DS_ADP_ADP_IDX], teams)
+        if not name or adp is None:
+            continue
+        if pos.upper() not in DS_ADP_FANTASY_POSITIONS:
+            continue  # team aggregates (TQB), not draftable players — see the constant
+        players.append(
+            {
+                "PLAYER NAME": name,
+                "TEAM": row[_DS_ADP_TEAM_IDX].strip(),
+                "BYE": "",  # not in the export; discarded downstream anyway
+                "POS": pos,
+                "ADP": adp,
+                "MARKET INDEX": row[_DS_ADP_MI_IDX].strip(),
+                "RT": "",
+            }
+        )
+
+    return players
+
+
+def _assert_ds_adp_board(adp_name: str, source: str, scoring: str) -> None:
+    """Raise unless DraftSharks' own label for the exported column names the board we asked for.
+
+    This is the only trustworthy provenance we get, and it must be read off the PAGE (where
+    the app resolves /adp/<scoring>/<source>/<teams> into ids), never off the export: the
+    export endpoint echoes back whatever `adp1_name` we hand it, answers a wrong id with a
+    full, plausible board for a DIFFERENT platform, and answers an unknown id with a bare
+    header and HTTP 200. Nothing about its response says which platform it actually is.
+    """
+    label = adp_name.lower()
+    if source.lower() not in label:
+        raise RuntimeError(
+            f"DraftSharks' export is labelled {adp_name!r}, which does not name '{source}'. "
+            "Refusing to save it — the platform ids on the ADP page may have been renumbered."
+        )
+    # 'half-ppr' is written '0.5 PPR' in DraftSharks' label.
+    expected_scoring = "0.5 ppr" if scoring == "half-ppr" else scoring.replace("-", " ")
+    if expected_scoring not in label:
+        raise RuntimeError(
+            f"DraftSharks' export is labelled {adp_name!r}, which does not name '{expected_scoring}' "
+            "scoring. Refusing to save it — the page's format ids may have changed."
+        )
+
+
+def _read_ds_adp_export_params(page_url: str, storage_state: str) -> tuple[dict, str]:
+    """Return the ADP export's query params and DraftSharks' label for the selected board.
+
+    The page URL (/adp/<scoring>/<source>/<teams>) is the source of truth for WHICH board is
+    meant, but the numeric `format::source::size` ids it resolves to are computed client-side
+    and appear only in the rendered export link — so this reads them from the live page rather
+    than hardcoding ids that would silently point at another platform if DraftSharks renumbers.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    sync_playwright = _require_playwright()
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # browser binary missing
+            raise RuntimeError(
+                "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
+            ) from exc
+        try:
+            context = browser.new_context(storage_state=storage_state)
+            page = context.new_page()
+            page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+
+            link = page.locator(_DS_ADP_EXPORT_SELECTOR).first
+            try:
+                link.wait_for(state="visible", timeout=30000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"DraftSharks' ADP export link never appeared on {page_url} — the page layout may have changed."
+                ) from exc
+
+            href = link.get_attribute("href") or ""
+            from fantasy_pipeline.scraper.auth import save_context_state
+
+            save_context_state(context, "ds")  # sliding session — capture rotated cookies
+        finally:
+            browser.close()
+
+    # Logged out, the control is `a.adp__export-btn.gated` -> /login.
+    if "/adp/export" not in href:
+        raise RuntimeError(
+            "DraftSharks' ADP export is gated — the 'ds' session has expired or is missing.\n"
+            "Re-authenticate with:\n  ff-rankings login ds"
+        )
+
+    query = parse_qs(urlparse(href).query)
+    adp1 = (query.get("adp1") or [""])[0]
+    adp1_name = (query.get("adp1_name") or [""])[0]
+    if not adp1:
+        raise RuntimeError(f"DraftSharks' ADP export link carried no 'adp1' board id: {href!r}")
+
+    return {"adp1": adp1, "adp1_name": adp1_name, "sort_column": "adp1"}, adp1_name
+
+
+def fetch_draftsharks_adp(
+    output_dir: str,
+    year: int = CURRENT_SEASON,
+    source: str = DS_ADP_SOURCE,
+    scoring: str = DS_ADP_SCORING,
+    teams: int = DS_ADP_TEAMS,
+    min_players: int = 200,
+) -> str:
+    """Fetch platform-specific ADP from DraftSharks and save a pipeline-ready CSV.
+
+    Defaults to the Sleeper 12-team half-PPR redraft board
+    (https://www.draftsharks.com/adp/half-ppr/sleeper/12), replacing the FantasyPros
+    consensus ADP this pipeline used to draft against. Writes the 7-col
+    COLUMN_MAPPINGS['adp'] layout to `DraftSharks_<year>_<Source>_ADP.csv`.
+
+    Two things make this less direct than it looks:
+
+    1. **ADP arrives as round.pick, not an overall pick.** '1.10' is overall 10 but floats to
+       1.1. Everything downstream (`ADP Delta`, `ADP ROUND`, `POS ADP`) treats ADP as an
+       overall pick, so the values are converted (see _round_pick_to_overall).
+    2. **The export endpoint has no provenance.** It labels its ADP column with the
+       `adp1_name` we send it, serves a full board for the wrong platform if the ids are
+       wrong, and returns HTTP 200 + a bare header for ids it doesn't know. So the board ids
+       are read off the live page (where the app resolves the URL's platform into ids) and
+       DraftSharks' own label is asserted to name the requested platform before anything is
+       written.
+
+    Requires a saved session (`ff-rankings login ds`) — the same one `fetch_draftsharks`
+    uses; the ADP export is gated behind /login.
+
+    Args:
+        output_dir: Directory to save the CSV (the pipeline's update/ folder).
+        year: Season year for the filename (the page always serves the live season).
+        source: ADP platform slug as it appears in the page URL (e.g. 'sleeper', 'espn').
+        scoring: Scoring slug as it appears in the page URL (e.g. 'half-ppr', 'ppr').
+        teams: League size. Selects the board AND converts round.pick to an overall pick.
+        min_players: Coverage floor — raise if fewer rows parse (layout drift guard).
+
+    Returns:
+        Path to the saved CSV file.
+
+    Raises:
+        RuntimeError: if there's no saved session, Playwright/Chromium is unavailable, the
+            export is gated, the board's label doesn't name `source`/`scoring`, the export
+            layout drifts, or fewer than `min_players` rows parse.
+    """
+    from fantasy_pipeline.scraper.auth import load_cookies, load_storage_state
+
+    page_url = ds_adp_page_url(source, scoring, teams)
+    params, adp_name = _read_ds_adp_export_params(page_url, load_storage_state("ds"))
+    _assert_ds_adp_board(adp_name, source, scoring)
+
+    cookies = load_cookies("ds", domain_contains="draftsharks")
+    response = requests.get(
+        DS_ADP_EXPORT_URL, params=params, headers={"User-Agent": USER_AGENT}, cookies=cookies, timeout=60
+    )
+    response.raise_for_status()
+
+    players = _parse_ds_adp_export(response.text, teams)
+    if len(players) < min_players:
+        raise RuntimeError(
+            f"Only {len(players)} ADP players parsed from {adp_name!r} (expected >= {min_players}); "
+            "the 'ds' session may have expired, or the export may have changed"
+        )
+
+    filename = f"DraftSharks_{year}_{source.capitalize()}_ADP.csv"
+    output_path = os.path.join(output_dir, filename)
+
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=ADP_OUTPUT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(players)
+
+    print(f"ADP fetched: {len(players)} players from {adp_name!r} saved to {output_path}")
     return output_path
 
 
@@ -1182,17 +1338,24 @@ def _validate_jj_session(context) -> bool:
 
 
 def _validate_fp_session(context) -> bool:
-    """True if FantasyPros' ADP report returns the full board rather than a fenced teaser.
+    """True if FantasyPros' weekly-leaders report returns a full season, not a fenced teaser.
+
+    Probes the weekly-leaders report because that is the only thing the `fp` session still
+    gates (`ff-stats fetch-weekly`): `fetch-fp` reads the un-fenced cheatsheet, and ADP now
+    comes from DraftSharks. Validate what the session is actually used for.
+
+    Judge by row count, not by the `registrationFence` flag: that key is only present for
+    ANONYMOUS visitors and vanishes once logged in, so `fence is None` means authenticated.
 
     Uses the context's request API (which carries its cookies) — no page render needed,
     since the report is server-rendered into the HTML.
     """
     try:
-        response = context.request.get(FP_ADP_URL, timeout=30000)
+        response = context.request.get(f"{WEEKLY_LEADERS_URLS['half-ppr']}?year={LAST_COMPLETED_SEASON}", timeout=30000)
         if not response.ok:
             return False
         config = _extract_fp_report_config(response.text())
-        return len(config.get("table", {}).get("rows", [])) > FP_ADP_TEASER_ROWS
+        return len(config.get("table", {}).get("rows", [])) > FP_WEEKLY_LEADERS_TEASER_ROWS
     except Exception:
         return False
 

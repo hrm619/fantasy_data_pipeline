@@ -70,61 +70,38 @@ Status: ✅ (built across sources #1–#4)
   one-time manual login and persists the session to `~/.fantasy_pipeline/auth/<source>.json` (outside the
   repo). Headless fetchers reuse it via `load_storage_state(source)`; no passwords stored/handled. Built
   for the paywalled sources (#5–#7); proven by `pff`.
-- 🟡 **Harden `_TableParser`** — still used only by the ADP fetcher (fp uses JSON, ds uses Playwright). The
-  text-node fusion edge case hasn't bitten ADP in practice; left as-is. Revisit only if ADP names break.
+- ✅ **`_TableParser` retired** — nothing hand-parses HTML tables any more: `fp` reads embedded JSON,
+  `ds`/`pff`/`fpts` drive real exports, and `adp` now parses DraftSharks' export CSV.
 
 ---
 
-## 1. FantasyPros ADP — `adp`
-**Status:** ✅ consensus shipped & pipeline-consumable · ⬜ Sleeper option pending source hunt
-**Code:** `fetch_rankings.fetch_fantasypros_adp` · CLI `ff-rankings fetch-adp` · **URL:** `fantasypros.com/nfl/adp/ppr-overall.php`
+## 1. ADP — `adp` (DraftSharks, Sleeper)
+**Status:** ✅ shipped & pipeline-consumable — Sleeper-specific, replacing FantasyPros consensus
+**Code:** `fetch_rankings.fetch_draftsharks_adp` · CLI `ff-rankings fetch-adp` · **URL:** `draftsharks.com/adp/half-ppr/sleeper/12`
 
-### ✅ Done (2026-06-14)
-- Fetcher rewritten for the live 4-col table; emits the exact 7-col `COLUMN_MAPPINGS['adp']` schema
-  (consensus AVG → ADP; MARKET INDEX/RT blank placeholders).
-- `ff-rankings fetch-adp` CLI command added (additive; existing `ff-rankings --league-type` unchanged).
-- Coverage floor (`min_players=200`) guards layout drift.
-- Tests: `tests/test_fetch_rankings.py` (fixture-based, no network) incl. a schema-contract guard
-  (`ADP_OUTPUT_COLUMNS == COLUMN_MAPPINGS['adp']`).
-- Verified end-to-end live: 411 players → loads → positional rename → processor emits ADP/ADP ROUND.
+### ✅ Done (2026-07-14) — closes the long-blocked "Sleeper option pending source hunt"
+- **Source switched** FantasyPros consensus → **DraftSharks Sleeper 12-team half-PPR**. The old source was
+  an *expert consensus*, not the platform the league drafts on; `ADP Delta` is only a market-divergence
+  signal if ADP is the actual market.
+- Emits the exact 7-col `COLUMN_MAPPINGS['adp']` schema → `DraftSharks_<season>_Sleeper_ADP.csv`.
+- Rides the existing **`ds`** session (`refresh-all` maps `adp → ds`); `fp` now gates only `ff-stats
+  fetch-weekly`, so `_validate_fp_session` was repointed at the weekly-leaders report.
+- `--source/--scoring/--teams` expose other boards (e.g. `--source espn --teams 10`).
+- Verified end-to-end live: **287 players** → loads → positional rename → processor emits ADP/ADP ROUND,
+  with exactly 12 players in round 1 and rounds spanning 1–25.
+
+### Two traps absorbed (see CLAUDE.md for the long version)
+- **`round.pick` ≠ overall pick.** DraftSharks publishes `1.10` for "round 1, pick 10"; it floats to `1.1`,
+  colliding with pick 1 and sorting below `1.2`. Converted via `(round - 1) * teams + pick`, verified
+  against the page's own `overall_pick_number` (318/318 exact).
+- **`/adp/export` has no provenance.** It echoes back the `adp1_name` you send as the column header, serves
+  a full board for the *wrong* platform on a wrong id, and returns HTTP 200 + a bare header for an unknown
+  id. Board ids are therefore read off the live page's export link and its label asserted before writing.
+  **Never hardcode `adp1=18::107::12`.**
+- Also drops the 31 `TQB` team-aggregate rows, which collide by name with each team's `DEF` row.
 
 ### ⬜ Remaining
-- Sleeper `--platform` option — blocked on finding a Sleeper redraft ADP source (investigation running).
-
-### Current state (verified 2026-06-14)
-- Fetch runs, returns **411 players**, clean data: `1, Jahmyr Gibbs, DET, RB, 6, 1.5`.
-- Output columns: `[Rank, Player, Team, Pos, Bye, AVG]` (6).
-- **Decided:** consensus ADP by default, with an option to select a single platform (Sleeper = primary).
-- **⚠️ Blocker for the platform option:** FantasyPros redraft ADP pages now serve a **single 4-col
-  consensus table** (`Rank, Player, POS, AVG`); `sleeper-*overall.php` 302-redirects to `overall.php`,
-  and `?source=Sleeper` is ignored. Best-ball ADP exposes platforms (BB10/RTSports/Underdog/Drafters/
-  DraftKings) but **not Sleeper**. → **Sleeper redraft ADP is not scrapable from FantasyPros static HTML.**
-  Consensus is available now; Sleeper needs a different source (Sleeper API, logged-in FP export, or headless).
-
-### Target
-- Fetched CSV named `FantasyPros_2025_Overall_ADP_Rankings.csv` lands in `update/` and `ff-rankings`
-  consumes it as the `adp` source with no manual edits.
-
-### Gaps
-- ❌ Schema: 6 cols vs `COLUMN_MAPPINGS['adp']` = 7 `[PLAYER NAME, TEAM, BYE, POS, ADP, MARKET INDEX, RT]`.
-- ❌ Column names/order differ (`Player`→`PLAYER NAME`, `AVG`→`ADP`, no `MARKET INDEX`/`RT`).
-- ❌ No CLI command (docs reference a nonexistent `ff-rankings fetch-adp`).
-- ⚠️ Coverage dropped 989 → 411 (page/default-view change) — no monitoring.
-
-### Tasks
-- ⬜ Map fetched fields → 7-col `adp` schema via the shared adapter (`MARKET INDEX`/`RT` blank or derived).
-- ⬜ Confirm positional order matches config exactly; verify with a real `ff-rankings` redraft dry run.
-- ⬜ Add `ff-rankings fetch-adp` CLI command writing to `update/`.
-- ⬜ Add coverage floor (e.g. warn if `< 300`).
-- ⬜ Fixture-based unit tests (parse + adapt + count).
-
-### Acceptance
-- Fetched file passes end-to-end through `ff-rankings --league-type redraft` with `adp` recognized
-  (no "column count mismatch", ADP-derived columns like `POS ADP`/`ADP Delta` populate).
-
-### Decision needed
-- `MARKET INDEX` / `RT` aren't on the public ADP page. OK to leave blank, or derive/drop? (Affects whether
-  downstream consumers expect them.)
+- Nothing blocking. Optional: monitor coverage (287) for silent drift; `min_players=200` is the floor.
 
 ---
 

@@ -21,9 +21,9 @@ fetch sources  →  data/rankings current/update/  →  ff-rankings --league-typ
 
 | Source | Key | Automated? | Command | Auth | Output prefix |
 |--------|-----|-----------|---------|------|---------------|
-| FantasyPros ADP | `adp` | ✅ Yes | `ff-rankings fetch-adp` | none | `FantasyPros_<season>_Overall_ADP_Rankings.csv` |
+| DraftSharks ADP (Sleeper) | `adp` | ✅ Yes (saved session) | `ff-rankings fetch-adp` | login (`ds`) | `DraftSharks_<season>_Sleeper_ADP.csv` |
 | FantasyPros rankings | `fp` | ✅ Yes | `ff-rankings fetch-fp` | none | `FantasyPros_<season>_Draft_ALL_Rankings.csv` |
-| DraftSharks | `ds` | ✅ Yes (headless) | `ff-rankings fetch-ds` | none | `rankings-half-ppr.csv` |
+| DraftSharks | `ds` | ✅ Yes (headless) | `ff-rankings fetch-ds` | login (`ds`) | `rankings-half-ppr.csv` |
 | PFF | `pff` | ✅ Yes (saved session) | `ff-rankings fetch-pff` | login | `Draft-rankings-export-<season>.csv` |
 | FantasyPoints / Barrett | `fpts` | ✅ Yes (saved session) | `ff-rankings fetch-fpts` | login | `Scott Barrett <season> Redraft Rankings.csv` |
 | JJ Zachariason | `jj` | ✅ Yes (Patreon API) | `ff-rankings fetch-jj` | login | `Redraft1QB_<season>.csv` |
@@ -48,9 +48,35 @@ fetches the six and skips consolidation with instructions.
 
 Column layouts below are the positional schema the pipeline renames to (`COLUMN_MAPPINGS[key]`).
 
-### FantasyPros ADP (`adp`) — automated
-- **Fetch:** `ff-rankings fetch-adp` (HTTP scrape of the consensus ADP table).
-- **Schema (7):** `PLAYER NAME, TEAM, BYE, POS, ADP, MARKET INDEX, RT` (last two emitted blank).
+### DraftSharks ADP (`adp`) — automated
+- **Board:** Sleeper, redraft, half-PPR, 12-team — <https://www.draftsharks.com/adp/half-ppr/sleeper/12>.
+  This is **platform-specific ADP**, not an expert consensus: it's the market the board's
+  `ADP Delta` measures divergence against.
+- **One-time:** `ff-rankings login ds` (the ADP export is gated behind the same DraftSharks
+  account as `fetch-ds`). **Fetch:** `ff-rankings fetch-adp [--auto-login]`.
+- **Other boards:** `--source espn --scoring ppr --teams 10`. Note the pipeline only *reads*
+  the Sleeper 12-team file (`FILE_MAPPINGS['redraft']['adp']`), and `--teams` other than 12
+  disagrees with `ADP ROUND`'s hardcoded 12 — see below.
+- **Schema (7):** `PLAYER NAME, TEAM, BYE, POS, ADP, MARKET INDEX, RT` (`BYE`/`RT` emitted blank).
+
+Two traps this fetcher exists to absorb:
+
+- **ADP is published as `round.pick`, not an overall pick.** DraftSharks writes `1.10` for
+  "round 1, pick 10". Read as a number that's `1.1` — it collides with pick 1 and sorts below
+  `1.2`. Everything downstream (`ADP Delta = ADP - avg_RK`, `ADP ROUND = (ADP - 1) // 12 + 1`,
+  `POS ADP`) does arithmetic on ADP, so the fetcher converts to an overall pick
+  (`(round - 1) * teams + pick`, verified against the page's own `overall_pick_number`:
+  318/318 exact). Sanity check a fresh file: exactly **12 players should be in `ADP ROUND` 1**.
+- **The export endpoint has no provenance.** `/adp/export` labels its ADP column with the
+  `adp1_name` *you* send it, returns a full and plausible board for a *different* platform if
+  the ids are wrong, and answers an unknown id with HTTP 200 + a bare header. So the board ids
+  are read from the live page's export link (where DraftSharks resolves the URL's platform into
+  ids) and its label is asserted to name the requested platform before anything is written.
+  Don't "simplify" this by hardcoding `adp1=18::107::12` — that's how you silently ship ESPN
+  ADP labelled Sleeper.
+
+The fetcher also drops DraftSharks' 31 `TQB` (team-QB) aggregate rows: each is named after a
+team, so it collides with that team's `DEF` row (`Detroit Lions` is both TQB @140 and DEF @267).
 
 ### FantasyPros rankings (`fp`) — automated
 - **Fetch:** `ff-rankings fetch-fp [--scoring ppr|half-ppr|standard]` — parses the cheatsheet's
@@ -86,11 +112,14 @@ Column layouts below are the positional schema the pipeline renames to (`COLUMN_
 - **Weekly/ROS:** auto-scraped from the Underdog "Blueprint" article at pipeline run time
   (`scraper/hw_scraper.py`); no manual step.
 
-## Saved-session auth (paywalled sources)
+## Saved-session auth (account-gated sources)
 
-PFF, FantasyPoints, and JJ use a **saved-session** strategy — no passwords stored anywhere:
+DraftSharks, PFF, FantasyPoints, and JJ use a **saved-session** strategy — no passwords stored
+anywhere:
 
-- `ff-rankings login <pff|fpts|jj>` opens a browser; you log in once (2FA/SSO/OAuth fine). The
+- Login keys are **per-site, not per-fetcher**: `fetch-adp` and `fetch-ds` both ride the single
+  `ds` session, so one `ff-rankings login ds` covers both.
+- `ff-rankings login <ds|pff|fpts|jj>` opens a browser; you log in once (2FA/SSO/OAuth fine). The
   session persists to `~/.fantasy_pipeline/auth/<source>.json` (outside the repo).
 - Fetchers reuse it headlessly. Pass **`--auto-login`** to a fetcher or `refresh-all` to have the
   login window appear **only** when the session has actually expired.
