@@ -20,6 +20,18 @@ def tmp_csv_with_metadata(tmp_path):
 
 
 @pytest.fixture
+def tmp_csv_blank_line_before_header(tmp_path):
+    """CSV shaped like PFF's export: a title row, a BLANK line, the header, then data.
+
+    The blank line is the point: read_csv skips blank lines before applying `header=N`,
+    so header detection that counts them lands a row late and eats the first data row.
+    """
+    csv_path = tmp_path / "blank_line.csv"
+    csv_path.write_text("Draft-rankings-export-2026\n\nNAME,AGE,SCORE\nAlice,30,95\nBob,25,88\n")
+    return str(csv_path)
+
+
+@pytest.fixture
 def tmp_excel(tmp_path):
     """Create a simple Excel file for testing."""
     xlsx_path = tmp_path / "test.xlsx"
