@@ -86,7 +86,9 @@ COLUMN_MAPPINGS = {
     ],
     # PFF data
     "pff": ["RK", "PLAYER NAME", "TEAM", "POS", "POS RANK", "BYE", "PFF ADP", "PROJ", "AUCTION"],
-    # ADP data
+    # ADP data — DraftSharks, Sleeper 12-team half-PPR (see fetch_draftsharks_adp).
+    # ADP is an OVERALL PICK NUMBER: the fetcher converts DraftSharks' round.pick ('2.3')
+    # before writing, because ADP Delta / ADP ROUND / POS ADP all do arithmetic on it.
     "adp": ["PLAYER NAME", "TEAM", "BYE", "POS", "ADP", "MARKET INDEX", "RT"],
 }
 
@@ -198,7 +200,7 @@ FILE_MAPPINGS = {
         "ds": "rankings-half-ppr",
         "hw": "tableDownload",
         "pff": "Draft-rankings-export",
-        "adp": f"FantasyPros_{CURRENT_SEASON}_Overall_ADP_Rankings",
+        "adp": f"DraftSharks_{CURRENT_SEASON}_Sleeper_ADP",
     },
     "bestball": {
         "fpts": "Scott Barrett",

@@ -43,12 +43,18 @@ def _build_rankings_parser() -> argparse.ArgumentParser:
 
 
 def _fetch_adp_command(argv) -> int:
-    """Fetch FantasyPros consensus ADP into the update folder (`ff-rankings fetch-adp`)."""
+    """Fetch DraftSharks platform-specific ADP into the update folder (`ff-rankings fetch-adp`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
-    from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_adp
+    from fantasy_pipeline.scraper.fetch_rankings import (
+        DS_ADP_SCORING,
+        DS_ADP_SOURCE,
+        DS_ADP_TEAMS,
+        fetch_draftsharks_adp,
+    )
 
     parser = argparse.ArgumentParser(
-        prog="ff-rankings fetch-adp", description="Fetch FantasyPros consensus ADP and save it to the update folder"
+        prog="ff-rankings fetch-adp",
+        description="Fetch DraftSharks ADP (Sleeper 12-team half-PPR by default) and save it to the update folder",
     )
     parser.add_argument(
         "--output",
@@ -56,21 +62,36 @@ def _fetch_adp_command(argv) -> int:
         help="Directory to save the ADP CSV (default: the pipeline update folder)",
     )
     parser.add_argument("--year", type=int, default=CURRENT_SEASON, help="Season year for the filename")
+    parser.add_argument("--source", default=DS_ADP_SOURCE, help=f"ADP platform slug (default: {DS_ADP_SOURCE})")
+    parser.add_argument("--scoring", default=DS_ADP_SCORING, help=f"Scoring slug (default: {DS_ADP_SCORING})")
+    parser.add_argument(
+        "--teams",
+        type=int,
+        default=DS_ADP_TEAMS,
+        help=f"League size — selects the board and converts round.pick to an overall pick (default: {DS_ADP_TEAMS})",
+    )
     parser.add_argument(
         "--min-players", type=int, default=200, help="Coverage floor — fail if fewer players parse (default: 200)"
     )
     parser.add_argument(
-        "--auto-login", action="store_true", help="Open a login window if the FantasyPros session has expired"
+        "--auto-login", action="store_true", help="Open a login window if the DraftSharks session has expired"
     )
     ns = parser.parse_args(argv)
 
-    # ADP is registration-fenced; the saved session lives under the 'fp' auth key.
-    if not _ensure_session_if_requested(ns.auto_login, "fp"):
+    # The ADP export is gated behind DraftSharks' login — same 'ds' session as fetch-ds.
+    if not _ensure_session_if_requested(ns.auto_login, "ds"):
         return 1
 
     try:
         os.makedirs(ns.output, exist_ok=True)
-        path = fetch_fantasypros_adp(ns.output, year=ns.year, min_players=ns.min_players)
+        path = fetch_draftsharks_adp(
+            ns.output,
+            year=ns.year,
+            source=ns.source,
+            scoring=ns.scoring,
+            teams=ns.teams,
+            min_players=ns.min_players,
+        )
         print(f"\n✅ ADP saved to: {path}")
         return 0
     except Exception as e:
@@ -212,7 +233,7 @@ def _refresh_all_command(argv) -> int:
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
     from fantasy_pipeline import RankingsProcessor
     from fantasy_pipeline.scraper.fetch_rankings import (
-        fetch_fantasypros_adp,
+        fetch_draftsharks_adp,
         fetch_fantasypros_rankings,
         fetch_draftsharks,
         fetch_pff,
@@ -249,10 +270,10 @@ def _refresh_all_command(argv) -> int:
     # (label, source, thunk) — each thunk writes one source file into update_dir. `source`
     # is the saved-session key (None for sources needing no account). These are the redraft
     # fetchers; weekly/ROS HW is auto-scraped by the pipeline itself.
-    # Note 'adp' and 'fp' hit the same site but differ: only the ADP report is
-    # registration-fenced, so 'adp' needs the 'fp' session while 'fp' itself does not.
+    # Note 'adp' and 'ds' hit the same site and share the 'ds' session: ADP is DraftSharks'
+    # Sleeper board, gated behind the same login as the DraftSharks rankings export.
     fetchers = [
-        ("adp  (FantasyPros ADP)", "fp", lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
+        ("adp  (DraftSharks Sleeper ADP)", "ds", lambda: fetch_draftsharks_adp(update_dir, year=ns.year)),
         ("fp   (FantasyPros rankings)", None, lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
         ("ds   (DraftSharks)", "ds", lambda: fetch_draftsharks(update_dir)),
         ("pff  (PFF)", "pff", lambda: fetch_pff(update_dir, year=ns.year)),

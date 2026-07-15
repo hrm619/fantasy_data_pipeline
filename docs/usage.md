@@ -29,9 +29,10 @@ if any fetch failed), `--auto-login`, `--year`, `--data-path`, `--base-data-dir`
 
 Or fetch sources individually:
 ```bash
-ff-rankings fetch-adp        # free
-ff-rankings fetch-fp
+ff-rankings fetch-fp         # free
+ff-rankings login ds         # one-time; covers BOTH fetch-ds and fetch-adp
 ff-rankings fetch-ds
+ff-rankings fetch-adp --auto-login   # DraftSharks Sleeper 12-team half-PPR ADP
 ff-rankings login pff        # one-time per paywalled source
 ff-rankings fetch-pff --auto-login
 ff-rankings fetch-fpts --auto-login

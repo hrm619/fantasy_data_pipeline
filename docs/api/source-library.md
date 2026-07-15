@@ -77,7 +77,10 @@ df = add_player_ids(df, name_to_key, verbose=True)
 Each writes a pipeline-ready file into the given directory (see [data-sources.md](../data-sources.md)).
 
 ```python
-fetch_fantasypros_adp(output_dir, year=CURRENT_SEASON, min_players=200)
+# Sleeper 12-team half-PPR ADP; converts DraftSharks' round.pick to an overall pick.
+# Needs the 'ds' session (headless Playwright reads the board ids off the live page).
+fetch_draftsharks_adp(output_dir, year=CURRENT_SEASON, source="sleeper",
+                      scoring="half-ppr", teams=12, min_players=200)
 fetch_fantasypros_rankings(output_dir, year=CURRENT_SEASON, scoring="ppr", min_players=200)
 fetch_draftsharks(output_dir, min_players=150)                       # headless (Playwright)
 fetch_pff(output_dir, year=CURRENT_SEASON, min_players=200)          # saved session

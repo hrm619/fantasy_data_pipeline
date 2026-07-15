@@ -10,7 +10,7 @@ import fantasy_pipeline.scraper.fetch_rankings as fr
 from fantasy_pipeline.cli.rankings import _refresh_all_command
 
 FETCHER_NAMES = [
-    "fetch_fantasypros_adp",
+    "fetch_draftsharks_adp",
     "fetch_fantasypros_rankings",
     "fetch_draftsharks",
     "fetch_pff",
@@ -133,6 +133,25 @@ def test_auto_login_skips_paywalled_source_with_invalid_session(monkeypatch, tmp
 
     assert "fetch_jj" not in calls  # skipped, session invalid
     assert "fetch_pff" in calls and "fetch_fpts" in calls  # re-authed, ran
-    assert "fetch_fantasypros_adp" in calls  # free sources unaffected
+    assert "fetch_fantasypros_rankings" in calls  # the one account-free source, unaffected
     assert _FakeProcessor.state.get("consolidated") is True  # still consolidated
     assert rc == 1  # jj counted as a failure
+
+
+def test_adp_rides_the_ds_session(monkeypatch, tmp_path):
+    """ADP comes from DraftSharks now, so a dead 'ds' session must skip it too.
+
+    Guards the wiring that used to map adp -> the FantasyPros 'fp' session.
+    """
+    calls = []
+    _stub_fetchers(monkeypatch, calls)
+    _stub_processor(monkeypatch)
+    _add_manual_hw(tmp_path)
+    monkeypatch.setattr(fr, "ensure_session", lambda s: s != "ds")
+
+    rc = _refresh_all_command(["--data-path", str(tmp_path), "--auto-login"])
+
+    assert "fetch_draftsharks_adp" not in calls  # gated behind the same login as ds
+    assert "fetch_draftsharks" not in calls
+    assert "fetch_fantasypros_rankings" in calls  # needs no account
+    assert rc == 1

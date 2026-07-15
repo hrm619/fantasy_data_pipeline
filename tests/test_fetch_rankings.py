@@ -1,6 +1,6 @@
-"""Tests for the FantasyPros ADP fetcher's parsing + pipeline-schema output.
+"""Tests for the ADP + FantasyPros rankings fetchers' parsing and pipeline-schema output.
 
-Uses inline HTML fixtures so the suite never hits the network.
+Uses inline fixtures so the suite never hits the network.
 """
 
 import json
@@ -11,110 +11,173 @@ from fantasy_pipeline.config import COLUMN_MAPPINGS
 from fantasy_pipeline.scraper.fetch_rankings import (
     ADP_OUTPUT_COLUMNS,
     FP_OUTPUT_COLUMNS,
-    _parse_fantasypros_adp,
+    _assert_ds_adp_board,
+    _parse_ds_adp_export,
     _parse_fantasypros_rankings,
-    _split_team_bye,
+    _round_pick_to_overall,
+    ds_adp_page_url,
 )
 
 
-def _adp_html(rows, fenced=False):
-    """Build a page embedding `window.FP.reportConfig`, as the live ADP report does."""
-    config = {
-        "type": "nfl_adp",
-        "registrationFence": fenced,
-        "table": {
-            "fields": [{"key": "rank"}, {"key": "player"}, {"key": "pos"}, {"key": "avg"}],
-            "rows": rows,
-        },
-    }
-    # The trailing `;` and sibling assignment mirror the real page, where a naive
-    # non-greedy regex could over/under-match.
-    return (
-        "<html><body><script>\n"
-        "  window.FP = window.FP || {};\n"
-        f"  window.FP.reportConfig = {json.dumps(config)};\n"
-        '  window.FP.other = {"x": 1};\n'
-        "</script></body></html>"
-    )
+# DraftSharks' ADP export. The 4th header is an echo of the `adp1_name` we send, not a
+# fixed label — the parser must key on position, not on this text.
+DS_ADP_CSV = (
+    '"Player Name", "Player Team", "Player Position", Sleeper: Redraft 0.5 PPR ADP, "Market Index 1",\n'
+    '"Bijan Robinson","ATL","RB","1.1","-2",\n'
+    '"Ja\'Marr Chase","CIN","WR","1.10","-1",\n'
+    '"Ashton Jeanty","LVR","RB","2.1","1",\n'
+    '"Deep Sleeper","NYJ","TE","25.12","4",\n'
+)
 
 
-def _row(rank, name, team, pos, avg):
-    return {"id": rank, "rank": rank, "player": {"id": rank, "name": name, "team": team}, "pos": pos, "avg": avg}
+class TestRoundPickToOverall:
+    def test_first_pick(self):
+        assert _round_pick_to_overall("1.1", 12) == 1
+
+    def test_pick_ten_is_not_one_point_one(self):
+        # The whole reason this conversion exists: '1.10' floats to 1.1, colliding with
+        # '1.1' and sorting below '1.2'. As an overall pick it is unambiguous.
+        assert _round_pick_to_overall("1.10", 12) == 10
+        assert _round_pick_to_overall("1.1", 12) == 1
+
+    def test_round_boundary(self):
+        assert _round_pick_to_overall("1.12", 12) == 12
+        assert _round_pick_to_overall("2.1", 12) == 13
+
+    def test_last_pick_of_a_25_round_draft(self):
+        assert _round_pick_to_overall("25.12", 12) == 300
+
+    def test_ordering_is_monotonic_unlike_float_parsing(self):
+        picks = ["1.1", "1.2", "1.10", "1.11", "1.12", "2.1"]
+        overall = [_round_pick_to_overall(p, 12) for p in picks]
+        assert overall == sorted(overall)
+        # float() would order these wrongly, which is exactly the silent corruption.
+        assert [float(p) for p in picks] != sorted(float(p) for p in picks)
+
+    def test_respects_league_size(self):
+        assert _round_pick_to_overall("2.1", 10) == 11
+
+    @pytest.mark.parametrize("value", ["", "   ", "N/A", "-", "abc"])
+    def test_unparseable_returns_none(self, value):
+        assert _round_pick_to_overall(value, 12) is None
+
+    def test_pick_beyond_league_size_raises(self):
+        # A pick of 13 in a 12-team league means the board isn't the size we asked for;
+        # converting anyway would silently produce wrong overall picks.
+        with pytest.raises(RuntimeError, match="league size"):
+            _round_pick_to_overall("1.13", 12)
 
 
-ADP_ROWS = [
-    _row(1, "Jahmyr Gibbs", "DET (6)", "RB1", 1.5),
-    _row(2, "Ja'Marr Chase", "CIN (10)", "WR1", 3.0),
-    _row(3, "Saquon Barkley", "PHI (9)", "RB2", 4.2),
-]
-ADP_HTML = _adp_html(ADP_ROWS)
-
-
-class TestParseFantasyProsADP:
+class TestParseDSADPExport:
     def test_parses_all_player_rows(self):
-        assert len(_parse_fantasypros_adp(ADP_HTML)) == 3
+        assert len(_parse_ds_adp_export(DS_ADP_CSV, 12)) == 4
 
-    def test_extracts_name_team_bye_pos_adp(self):
-        gibbs = _parse_fantasypros_adp(ADP_HTML)[0]
-        assert gibbs["PLAYER NAME"] == "Jahmyr Gibbs"
-        assert gibbs["TEAM"] == "DET"
-        assert gibbs["BYE"] == "6"
-        assert gibbs["POS"] == "RB"  # positional-rank digit stripped from "RB1"
-        assert gibbs["ADP"] == "1.5"
+    def test_extracts_name_team_pos_and_overall_adp(self):
+        bijan = _parse_ds_adp_export(DS_ADP_CSV, 12)[0]
+        assert bijan["PLAYER NAME"] == "Bijan Robinson"
+        assert bijan["TEAM"] == "ATL"
+        assert bijan["POS"] == "RB"
+        assert bijan["ADP"] == 1
+        assert bijan["MARKET INDEX"] == "-2"
+
+    def test_adp_is_converted_to_overall_pick(self):
+        rows = {r["PLAYER NAME"]: r["ADP"] for r in _parse_ds_adp_export(DS_ADP_CSV, 12)}
+        assert rows["Ja'Marr Chase"] == 10  # '1.10'
+        assert rows["Ashton Jeanty"] == 13  # '2.1'
+        assert rows["Deep Sleeper"] == 300  # '25.12'
 
     def test_preserves_apostrophe_in_name(self):
-        assert _parse_fantasypros_adp(ADP_HTML)[1]["PLAYER NAME"] == "Ja'Marr Chase"
+        assert _parse_ds_adp_export(DS_ADP_CSV, 12)[1]["PLAYER NAME"] == "Ja'Marr Chase"
 
     def test_output_keys_match_pipeline_schema_order(self):
-        assert list(_parse_fantasypros_adp(ADP_HTML)[0].keys()) == ADP_OUTPUT_COLUMNS
+        assert list(_parse_ds_adp_export(DS_ADP_CSV, 12)[0].keys()) == ADP_OUTPUT_COLUMNS
 
-    def test_market_index_and_rt_are_blank_placeholders(self):
-        row = _parse_fantasypros_adp(ADP_HTML)[0]
-        assert row["MARKET INDEX"] == ""
+    def test_bye_and_rt_are_blank_placeholders(self):
+        # DraftSharks' export carries no bye; the processor discards both anyway.
+        row = _parse_ds_adp_export(DS_ADP_CSV, 12)[0]
+        assert row["BYE"] == ""
         assert row["RT"] == ""
 
-    def test_skips_rows_without_a_player_name(self):
-        html = _adp_html(ADP_ROWS + [{"rank": 4, "player": {}, "pos": "TE1", "avg": 9.9}])
-        assert len(_parse_fantasypros_adp(html)) == 3
+    def test_ignores_the_echoed_adp_column_label(self):
+        # The 4th header is whatever adp1_name we sent, so a different label must still parse.
+        renamed = DS_ADP_CSV.replace("Sleeper: Redraft 0.5 PPR ADP", "Anything At All")
+        assert len(_parse_ds_adp_export(renamed, 12)) == 4
 
-    def test_ignores_sibling_assignments_after_the_blob(self):
-        # raw_decode must stop at the reportConfig object, not swallow `window.FP.other`.
-        assert len(_parse_fantasypros_adp(ADP_HTML)) == 3
+    def test_skips_rows_without_a_usable_adp(self):
+        csv_text = DS_ADP_CSV + '"No ADP Guy","SF","WR","",""\n'
+        names = [r["PLAYER NAME"] for r in _parse_ds_adp_export(csv_text, 12)]
+        assert "No ADP Guy" not in names
 
-    def test_raises_when_report_config_missing(self):
-        with pytest.raises(RuntimeError, match="reportConfig"):
-            _parse_fantasypros_adp("<html><body>no data here</body></html>")
+    def test_skips_rows_without_a_name(self):
+        csv_text = DS_ADP_CSV + '"","SF","WR","3.1","0",\n'
+        assert len(_parse_ds_adp_export(csv_text, 12)) == 4
 
-    def test_raises_on_registration_fenced_teaser(self):
-        # Anonymous visitors get `registrationFence: true` plus a handful of rows; that must
-        # surface as a login instruction, not silently become a 3-player ADP board.
-        with pytest.raises(RuntimeError, match="registration-fenced"):
-            _parse_fantasypros_adp(_adp_html(ADP_ROWS, fenced=True))
+    def test_drops_team_aggregate_rows(self):
+        # DraftSharks emits a TQB (team-QB) row per team, named after the team — so it
+        # collides with that team's DEF row. Two rows under one name is the duplicate-row
+        # bug waiting to happen, and TQB isn't a position this pipeline drafts.
+        csv_text = DS_ADP_CSV + '"Detroit Lions","DET","TQB","12.8","0",\n"Detroit Lions","DET","DEF","23.3","-58",\n'
+        rows = _parse_ds_adp_export(csv_text, 12)
+        lions = [r for r in rows if r["PLAYER NAME"] == "Detroit Lions"]
+        assert len(lions) == 1
+        assert lions[0]["POS"] == "DEF"
+        assert lions[0]["ADP"] == 267
 
-    def test_full_board_parses_even_when_fence_flag_set(self):
-        # A logged-in session can still carry the flag while returning the full board.
-        rows = [_row(i, f"Player {i}", "DET (6)", f"RB{i}", i) for i in range(1, 40)]
-        assert len(_parse_fantasypros_adp(_adp_html(rows, fenced=True))) == 39
+    def test_keeps_every_drafted_position(self):
+        csv_text = DS_ADP_CSV.splitlines()[0] + "\n"
+        for i, pos in enumerate(["QB", "RB", "WR", "TE", "K", "DEF"], start=1):
+            csv_text += f'"Player {i}","SF","{pos}","{i}.1","0",\n'
+        assert len(_parse_ds_adp_export(csv_text, 12)) == 6
+
+    def test_raises_when_header_layout_drifts(self):
+        with pytest.raises(RuntimeError, match="layout changed"):
+            _parse_ds_adp_export('"Name","Squad","Spot","ADP"\n"X","SF","WR","1.1"\n', 12)
+
+    def test_raises_on_empty_export(self):
+        with pytest.raises(RuntimeError, match="empty"):
+            _parse_ds_adp_export("", 12)
+
+    def test_header_only_export_yields_no_players(self):
+        # An unknown board id returns HTTP 200 + a bare header; the coverage floor in the
+        # fetcher is what turns this into an error, so the parser just returns nothing.
+        header = DS_ADP_CSV.splitlines()[0]
+        assert _parse_ds_adp_export(header + "\n", 12) == []
+
+
+class TestAssertDSADPBoard:
+    def test_accepts_the_requested_board(self):
+        _assert_ds_adp_board("Sleeper: Redraft 0.5 PPR ADP", "sleeper", "half-ppr")
+
+    def test_rejects_a_different_platform(self):
+        # The export happily serves a full, plausible board for the wrong platform if the
+        # ids drift, so a label naming ESPN must never be saved as Sleeper ADP.
+        with pytest.raises(RuntimeError, match="does not name 'sleeper'"):
+            _assert_ds_adp_board("ESPN: Redraft 0.5 PPR ADP", "sleeper", "half-ppr")
+
+    def test_rejects_a_different_scoring(self):
+        with pytest.raises(RuntimeError, match="0.5 ppr"):
+            _assert_ds_adp_board("Sleeper: Redraft PPR ADP", "sleeper", "half-ppr")
+
+    def test_rejects_an_empty_label(self):
+        with pytest.raises(RuntimeError, match="does not name 'sleeper'"):
+            _assert_ds_adp_board("", "sleeper", "half-ppr")
+
+    def test_is_case_insensitive(self):
+        _assert_ds_adp_board("SLEEPER: REDRAFT 0.5 PPR ADP", "sleeper", "half-ppr")
+
+
+class TestDSADPPageURL:
+    def test_defaults_to_the_sleeper_12_team_half_ppr_board(self):
+        assert ds_adp_page_url() == "https://www.draftsharks.com/adp/half-ppr/sleeper/12"
+
+    def test_builds_other_boards(self):
+        assert ds_adp_page_url("espn", "ppr", 10) == "https://www.draftsharks.com/adp/ppr/espn/10"
 
 
 class TestSchemaContract:
     def test_output_columns_equal_pipeline_adp_mapping(self):
         # Guard: fetcher output must stay aligned with the pipeline's positional rename.
         assert ADP_OUTPUT_COLUMNS == COLUMN_MAPPINGS["adp"]
-
-
-class TestSplitTeamBye:
-    def test_standard_cell(self):
-        assert _split_team_bye("DET (6)") == ("DET", "6")
-
-    def test_two_letter_team(self):
-        assert _split_team_bye("SF (14)") == ("SF", "14")
-
-    def test_cell_without_bye_falls_back(self):
-        assert _split_team_bye("FA") == ("FA", "")
-
-    def test_empty_cell(self):
-        assert _split_team_bye("") == ("", "")
 
 
 # Mirrors the `var ecrData = {...}` JSON blob embedded on FantasyPros cheatsheet pages.
