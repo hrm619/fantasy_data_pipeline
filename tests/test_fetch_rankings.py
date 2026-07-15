@@ -159,3 +159,73 @@ class TestParseFantasyProsRankings:
 class TestFpSchemaContract:
     def test_output_columns_equal_pipeline_fp_mapping(self):
         assert FP_OUTPUT_COLUMNS == COLUMN_MAPPINGS["fp"]
+
+
+# ---------------------------------------------------------------------------
+# FantasyPros weekly leaders (ff-stats' --weekly-data input)
+# ---------------------------------------------------------------------------
+
+WEEKLY_ROWS = [
+    {
+        "id": 1,
+        "rank": 1,
+        "player": {"id": 1, "name": "Josh Allen", "team": "BUF"},
+        "pos": "QB",
+        "games": 17,
+        **{f"wk_{w}": (float(w) if w != 7 else "BYE") for w in range(1, 19)},
+        "avg": 22.0,
+        "points": 374.6,
+    }
+]
+
+
+def _weekly_html(rows):
+    config = {"type": "nfl_leaders", "table": {"fields": [{"key": "rank"}], "rows": rows}}
+    return f"<html><body><script>window.FP.reportConfig = {json.dumps(config)};</script></body></html>"
+
+
+class TestParseFpWeeklyLeaders:
+    def test_maps_to_weekly_data_schema(self):
+        from fantasy_pipeline.scraper.fetch_rankings import WEEKLY_LEADERS_COLUMNS, _parse_fp_weekly_leaders
+
+        row = _parse_fp_weekly_leaders(_weekly_html(WEEKLY_ROWS), 2025)[0]
+        assert list(row.keys()) == WEEKLY_LEADERS_COLUMNS
+        assert row["#"] == 1
+        assert row["PLAYER NAME"] == "Josh Allen"
+        assert row["POS"] == "QB"
+        assert row["TEAM"] == "BUF"
+        assert row["AVG"] == 22.0
+        assert row["TOTAL"] == 374.6
+
+    def test_stamps_the_season(self):
+        # The legacy hand-downloaded file had no season, which is how weekly trends and
+        # season totals silently drifted apart.
+        from fantasy_pipeline.scraper.fetch_rankings import _parse_fp_weekly_leaders
+
+        assert _parse_fp_weekly_leaders(_weekly_html(WEEKLY_ROWS), 2025)[0]["SEASON"] == 2025
+
+    def test_bye_weeks_pass_through_as_literal_string(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _parse_fp_weekly_leaders
+
+        row = _parse_fp_weekly_leaders(_weekly_html(WEEKLY_ROWS), 2025)[0]
+        assert row["7"] == "BYE"
+        assert row["1"] == 1.0
+
+    def test_all_18_week_columns_present(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _parse_fp_weekly_leaders
+
+        row = _parse_fp_weekly_leaders(_weekly_html(WEEKLY_ROWS), 2025)[0]
+        for week in range(1, 19):
+            assert str(week) in row
+
+    def test_skips_rows_without_a_player_name(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _parse_fp_weekly_leaders
+
+        rows = WEEKLY_ROWS + [{"rank": 2, "player": {}, "pos": "RB", "avg": 1, "points": 1}]
+        assert len(_parse_fp_weekly_leaders(_weekly_html(rows), 2025)) == 1
+
+    def test_unknown_scoring_raises(self):
+        from fantasy_pipeline.scraper.fetch_rankings import fetch_fp_weekly_leaders
+
+        with pytest.raises(ValueError, match="Unknown scoring"):
+            fetch_fp_weekly_leaders("/tmp/x.csv", year=2025, scoring="bogus")

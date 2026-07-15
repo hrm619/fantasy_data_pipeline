@@ -12,6 +12,7 @@ import os
 from typing import Dict, Optional
 from datetime import datetime
 
+from ..config import LAST_COMPLETED_SEASON
 from .season_stats_processor import calculate_season_stats
 from .weekly_stats_processor import calculate_weekly_trends
 
@@ -20,7 +21,7 @@ def aggregate_player_historical_stats(
     season_data_path: str,
     weekly_data_path: str,
     player_key_path: str = "player_key_dict.json",
-    season_filter: Optional[int] = 2024,
+    season_filter: Optional[int] = LAST_COMPLETED_SEASON,
     output_dir: Optional[str] = None,
     outlier_method: str = "percentile",
     outlier_percentile: float = 10.0,
@@ -32,7 +33,7 @@ def aggregate_player_historical_stats(
 
     This function:
     1. Loads season total stats and calculates fantasy point breakdowns
-    2. Filters season data to specified season (default: 2024)
+    2. Filters season data to specified season (default: the last completed season)
     3. Loads weekly stats and calculates trend metrics
     4. Merges the data together for comprehensive player analysis
     5. Returns combined dataset ready for integration with rankings
@@ -41,7 +42,8 @@ def aggregate_player_historical_stats(
         season_data_path (str): Path to season totals CSV file
         weekly_data_path (str): Path to weekly fantasy points CSV file
         player_key_path (str): Path to player key dictionary for ID mapping
-        season_filter (Optional[int]): Season to filter to (default: 2024, None for all seasons)
+        season_filter (Optional[int]): Season to filter to (default: LAST_COMPLETED_SEASON,
+                                       None for all seasons)
         output_dir (Optional[str]): Directory to save output CSV file (if None, no file saved)
         outlier_method (str): Method for removing outliers from weekly averages
         outlier_percentile (float): Percentile threshold for outlier removal
@@ -87,6 +89,8 @@ def aggregate_player_historical_stats(
             if verbose:
                 print("   ⚠️  No SEASON column found, using all data")
 
+    season_df = _dedupe_season_rows(season_df, verbose)
+
     # Process season statistics
     season_stats = calculate_season_stats(season_df, verbose=verbose)
 
@@ -100,6 +104,8 @@ def aggregate_player_historical_stats(
             print(f"   ✓ Loaded weekly data: {len(weekly_df)} players")
     except Exception as e:
         raise FileNotFoundError(f"Could not load weekly data from {weekly_data_path}: {e}")
+
+    weekly_df = _verify_weekly_season(weekly_df, season_filter, weekly_data_path, verbose)
 
     # Process weekly trends
     weekly_trends = calculate_weekly_trends(
@@ -155,6 +161,93 @@ def aggregate_player_historical_stats(
     return merged_df
 
 
+def _dedupe_season_rows(season_df: pd.DataFrame, verbose: bool) -> pd.DataFrame:
+    """Keep one row per PFR player id: the one with the most games played.
+
+    A player traded mid-season is normally a single row marked '2TM'/'3TM'/'4TM'. Rarely
+    (21 player-seasons across 2014-2025) PFR also emits the per-team rows alongside it, and
+    those extras are partial or empty — fewer games, PPR/FDPT blank. Left in, they give the
+    player two HIST_ rows, which then multiply his board rows on merge.
+
+    Most-games is the right pick in every observed case: it selects the nTM combined row over
+    its per-team fragments (Ben Tate 3TM G=11 vs PIT G=0), and where no nTM row exists it takes
+    the team he actually played for (Elijah Moore 2025: BUF G=9 over DEN G=0). Ties break
+    toward the row with fantasy points recorded.
+    """
+    if "ID" not in season_df.columns:
+        return season_df
+
+    dupes = season_df["ID"].notna() & season_df["ID"].duplicated(keep=False)
+    if not dupes.any():
+        return season_df
+
+    ranked = season_df.copy()
+    ranked["_games"] = pd.to_numeric(ranked.get("G"), errors="coerce").fillna(-1)
+    # Prefer a row that actually recorded fantasy points when games are tied.
+    points_col = "PPR" if "PPR" in ranked.columns else "FANTPT"
+    ranked["_has_points"] = pd.to_numeric(ranked.get(points_col), errors="coerce").notna()
+    ranked = ranked.sort_values(["_games", "_has_points"], ascending=[False, False])
+
+    # Rows with no id can't be de-duplicated by id — keep them all.
+    keyed = ranked[ranked["ID"].notna()].drop_duplicates(subset=["ID"], keep="first")
+    unkeyed = ranked[ranked["ID"].isna()]
+    deduped = pd.concat([keyed, unkeyed]).drop(columns=["_games", "_has_points"])
+    deduped = deduped.loc[deduped.index.intersection(season_df.index)].reindex(
+        [i for i in season_df.index if i in set(deduped.index)]
+    )
+
+    removed = len(season_df) - len(deduped)
+    if verbose and removed:
+        print(f"   ✓ Dropped {removed} duplicate player row(s) (kept the most-games row per player)")
+
+    return deduped
+
+
+def _verify_weekly_season(
+    weekly_df: pd.DataFrame, season_filter: Optional[int], weekly_data_path: str, verbose: bool
+) -> pd.DataFrame:
+    """Check the weekly data is the same season as the totals, then drop its SEASON column.
+
+    The season totals are filtered by SEASON, but the weekly file holds ONE season and carries
+    no season of its own unless stamped. Update one and not the other and the HIST_ block mixes
+    seasons — HIST_TOTAL_FPTS from one year beside HIST_FIRST_HALF_AVG from another — with
+    nothing raising. Files written by `ff-stats fetch-weekly` carry SEASON so that mismatch is
+    an error instead.
+
+    SEASON is dropped after the check: downstream (calculate_weekly_trends, then a name-based
+    merge against season data that has its own SEASON) never sees it, so this cannot perturb
+    the existing output.
+    """
+    if "SEASON" not in weekly_df.columns:
+        raise ValueError(
+            f"Weekly data at {weekly_data_path} has no SEASON column, so it cannot be verified "
+            f"against --season {season_filter}. An unstamped file is how season totals and "
+            "weekly trends silently drift apart. Regenerate it with:\n"
+            f"  ff-stats fetch-weekly --year {season_filter}"
+        )
+
+    seasons = sorted(pd.to_numeric(weekly_df["SEASON"], errors="coerce").dropna().unique())
+    if len(seasons) != 1:
+        raise ValueError(
+            f"Weekly data at {weekly_data_path} spans seasons {[int(s) for s in seasons]}; "
+            "it must hold exactly one (the trend maths assume a single season's weeks 1-18)."
+        )
+
+    weekly_season = int(seasons[0])
+    if season_filter is not None and weekly_season != season_filter:
+        raise ValueError(
+            f"Season mismatch: aggregating {season_filter} season totals but the weekly data at "
+            f"{weekly_data_path} is {weekly_season}. That would mix seasons within HIST_* "
+            f"(season stats from {season_filter}, weekly trends from {weekly_season}).\n"
+            f"Fetch the matching weekly data with:\n  ff-stats fetch-weekly --year {season_filter}"
+        )
+
+    if verbose:
+        print(f"   ✓ Weekly data season verified: {weekly_season}")
+
+    return weekly_df.drop(columns=["SEASON"])
+
+
 def _merge_season_and_weekly_data(
     season_df: pd.DataFrame, weekly_df: pd.DataFrame, player_key_dict: Dict, verbose: bool
 ) -> pd.DataFrame:
@@ -176,7 +269,22 @@ def _merge_season_and_weekly_data(
         if verbose:
             print("   🎯 Merging using Player IDs (most reliable)")
 
-        merged_df = season_df.merge(weekly_df_clean, on="PLAYER_ID", how="left")
+        # Drop unmatched (null-ID) rows from the RIGHT side before joining. pandas — unlike SQL
+        # — treats null as a joinable key, so every null-ID season row would cross-join against
+        # every null-ID weekly row, pairing unrelated players' season and weekly stats. A null
+        # ID cannot be a real match anyway, so those rows only ever produce garbage.
+        #
+        # This lay dormant for years: it needs unmatched players on BOTH sides, and 2024 had
+        # zero on the season side. The 2025 season (51 players not yet in player_key_dict, x136
+        # weekly) turned it into 6936 phantom rows — 7529 instead of 643.
+        # Left-joining keeps every season row; a null-ID season player simply gets NaN weekly
+        # columns, which is correct — it has no counterpart to match.
+        weekly_for_id_merge = weekly_df_clean[weekly_df_clean["PLAYER_ID"].notna()]
+        dropped = len(weekly_df_clean) - len(weekly_for_id_merge)
+        if verbose and dropped:
+            print(f"   ℹ️  Ignoring {dropped} weekly row(s) with no player ID (cannot match by ID)")
+
+        merged_df = season_df.merge(weekly_for_id_merge, on="PLAYER_ID", how="left")
 
     else:
         # Fallback to name matching
@@ -636,7 +744,7 @@ def merge_with_redraft_rankings(
 
 def create_rankings_ready_dataset(
     aggregated_df: pd.DataFrame,
-    current_season: str = "2024",
+    current_season: str = str(LAST_COMPLETED_SEASON),
     min_games: int = 8,
     output_dir: Optional[str] = None,
     verbose: bool = True,
@@ -649,7 +757,10 @@ def create_rankings_ready_dataset(
 
     Args:
         aggregated_df (pd.DataFrame): Output from aggregate_player_historical_stats
-        current_season (str): Season identifier for filtering
+        current_season (str): UNUSED — retained for backwards compatibility (this function is
+                             exported in the public API). The season is selected upstream by
+                             aggregate_player_historical_stats' season_filter; nothing here
+                             reads this value, so do not expect it to filter anything.
         min_games (int): Minimum games played to include player
         output_dir (Optional[str]): Directory to save output CSV file (if None, no file saved)
         verbose (bool): Whether to print progress information
@@ -737,7 +848,7 @@ def main():
         aggregated_stats = aggregate_player_historical_stats(
             season_data_path=season_data_path,
             weekly_data_path=weekly_data_path,
-            season_filter=2024,  # Filter to 2024 season only
+            season_filter=LAST_COMPLETED_SEASON,
             output_dir="data/historical_stats/",  # Save aggregated data
             verbose=True,
         )
@@ -745,7 +856,7 @@ def main():
         # Create rankings-ready dataset (with file output)
         rankings_ready = create_rankings_ready_dataset(
             aggregated_stats,
-            current_season="2024",
+            current_season=str(LAST_COMPLETED_SEASON),
             min_games=10,
             output_dir="data/rankings current/latest/",  # Save to rankings directory
             verbose=True,
