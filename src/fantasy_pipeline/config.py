@@ -184,6 +184,11 @@ ROS_COLUMN_MAPPINGS = {
 #   - the HW scraper article slug (get_hw_scraper_url's `season` default)
 CURRENT_SEASON = 2026
 
+# The most recent COMPLETED season — what "historical stats" means while CURRENT_SEASON is
+# still being drafted. Drives the ff-stats defaults (season filter, weekly fetch), which used
+# to be hardcoded to 2024 and so silently rebuilt a stale season after the rollover.
+LAST_COMPLETED_SEASON = CURRENT_SEASON - 1
+
 # File lookup patterns for different league types
 FILE_MAPPINGS = {
     "redraft": {

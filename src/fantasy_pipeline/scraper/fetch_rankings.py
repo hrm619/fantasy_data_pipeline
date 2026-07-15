@@ -250,6 +250,123 @@ def fetch_fantasypros_rankings(
 
 
 # ---------------------------------------------------------------------------
+# FantasyPros weekly leaders (ff-stats weekly input) — embedded reportConfig JSON
+# ---------------------------------------------------------------------------
+
+# Column layout of `data/fpts historical/weekly_data.csv`, the --weekly-data input to ff-stats.
+# Week columns are the bare numbers '1'..'18'; a bye is the literal string 'BYE' (both here and
+# in the source, so it passes through as-is). SEASON is appended by this fetcher — it is NOT in
+# the legacy hand-downloaded file, which is exactly why a season mismatch used to go unnoticed.
+WEEKLY_LEADERS_WEEKS = [str(w) for w in range(1, 19)]
+WEEKLY_LEADERS_COLUMNS = ["#", "PLAYER NAME", "POS", "TEAM", *WEEKLY_LEADERS_WEEKS, "AVG", "TOTAL", "SEASON"]
+
+# Scoring -> FantasyPros weekly-leaders report. Half-PPR is what the pipeline uses: the legacy
+# weekly_data.csv matches PFR's FDPT (FanDuel = half-PPR) column exactly.
+#
+# Registration-fenced like the ADP report, so this needs the free `fp` session. Note the fence
+# is easy to misread: `registrationFence` is only present (True) for ANONYMOUS visitors and is
+# ABSENT once logged in — so "fence is None" means "we're authenticated", not "no fence". Judge
+# by row count instead: anonymous returns an 8-row teaser vs ~734 for a full season.
+WEEKLY_LEADERS_URLS = {
+    "half-ppr": "https://www.fantasypros.com/nfl/reports/leaders/half-ppr.php",
+    "ppr": "https://www.fantasypros.com/nfl/reports/leaders/ppr.php",
+    "standard": "https://www.fantasypros.com/nfl/reports/leaders/.php",
+}
+
+
+def _parse_fp_weekly_leaders(html: str, year: int) -> list[dict]:
+    """Parse a FantasyPros weekly-leaders page into WEEKLY_LEADERS_COLUMNS rows.
+
+    Same embedded `window.FP.reportConfig` blob as the ADP report (this page is not
+    registration-fenced). Fields: rank, player{name, team}, pos, games, wk_1..wk_18, avg, points.
+    """
+    config = _extract_fp_report_config(html)
+    rows = config.get("table", {}).get("rows", [])
+
+    players = []
+    for row in rows:
+        player = row.get("player") or {}
+        name = (player.get("name") or "").strip()
+        if not name:
+            continue
+        record = {
+            "#": row.get("rank", ""),
+            "PLAYER NAME": name,
+            "POS": str(row.get("pos", "")).strip(),
+            "TEAM": (player.get("team") or "").strip(),
+        }
+        for week in WEEKLY_LEADERS_WEEKS:
+            # 'BYE' arrives as a literal string; anything missing stays blank.
+            value = row.get(f"wk_{week}", "")
+            record[week] = "" if value is None else value
+        record["AVG"] = row.get("avg", "")
+        record["TOTAL"] = row.get("points", "")
+        record["SEASON"] = year
+        players.append(record)
+
+    return players
+
+
+def fetch_fp_weekly_leaders(
+    output_path: str,
+    year: int,
+    scoring: str = "half-ppr",
+    min_players: int = 300,
+) -> str:
+    """Fetch a season's weekly fantasy points and write ff-stats' --weekly-data CSV.
+
+    This replaces the hand-downloaded `weekly_data.csv`, which held a single unlabelled season.
+    Writes a SEASON column so `aggregate_player_historical_stats` can verify the weekly data
+    matches the season being aggregated instead of silently pairing 2025 season totals with
+    2024 weekly trends.
+
+    Requires the free FantasyPros session (`ff-rankings login fp`) — this report is
+    registration-fenced like ADP, serving anonymous visitors an 8-row teaser.
+
+    Args:
+        output_path: Full path of the CSV to write (e.g. 'data/fpts historical/weekly_data.csv').
+        year: Season to fetch. The page serves completed seasons via ?year=.
+        scoring: One of 'half-ppr' (default — matches the pipeline), 'ppr', 'standard'.
+        min_players: Coverage floor — raise if fewer rows parse. Also the backstop that catches
+            the fence: a teaser lands far below any sane floor.
+
+    Returns:
+        Path to the saved CSV file.
+
+    Raises:
+        ValueError: if `scoring` is unknown.
+        RuntimeError: if there's no saved session, the blob is missing, or fewer than
+            `min_players` rows parse.
+    """
+    if scoring not in WEEKLY_LEADERS_URLS:
+        raise ValueError(f"Unknown scoring {scoring!r}; choose from {sorted(WEEKLY_LEADERS_URLS)}")
+
+    from fantasy_pipeline.scraper.auth import load_cookies
+
+    cookies = load_cookies("fp", domain_contains="fantasypros.com")
+    url = f"{WEEKLY_LEADERS_URLS[scoring]}?year={year}"
+    response = requests.get(url, headers={"User-Agent": USER_AGENT}, cookies=cookies, timeout=30)
+    response.raise_for_status()
+
+    players = _parse_fp_weekly_leaders(response.text, year)
+    if len(players) < min_players:
+        raise RuntimeError(
+            f"Only {len(players)} weekly-leader rows parsed for {year} (expected >= {min_players}); "
+            "the FantasyPros session may have expired (an anonymous request gets an 8-row teaser), "
+            "the season may be incomplete, or the page layout may have changed"
+        )
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=WEEKLY_LEADERS_COLUMNS)
+        writer.writeheader()
+        writer.writerows(players)
+
+    print(f"Weekly leaders fetched: {len(players)} players ({year}, {scoring}) saved to {output_path}")
+    return output_path
+
+
+# ---------------------------------------------------------------------------
 # DraftSharks (headless-browser fetcher)
 # ---------------------------------------------------------------------------
 
