@@ -1,4 +1,4 @@
-"""Saved-session auth for the paywalled ranking sources (fpts, pff, jj).
+"""Saved-session auth for the account-gated ranking sources (fp, fpts, pff, jj).
 
 Strategy: the user logs in **once** per source in a real (headed) browser via
 `ff-rankings login <source>`; we persist that browser context's cookies/localStorage
@@ -9,12 +9,24 @@ Secrets location: ``~/.fantasy_pipeline/auth/<source>.json`` (outside the git tr
 design — nothing to .gitignore). Re-run `login` when a session expires.
 """
 
+import json
 import os
 from pathlib import Path
 
-# Login pages for each paywalled source. The fetchers own their rankings/export URLs;
+# Login pages for each account-gated source. The fetchers own their rankings/export URLs;
 # this maps only the page to land on for the one-time interactive login.
+#
+# 'fp' is the FantasyPros account, which gates the *ADP* fetcher (`fetch-adp`): FantasyPros
+# added `registrationFence: true` to its ADP report, serving anonymous visitors a 5-player
+# teaser. The account is free. Note the sibling `fetch-fp` (expert consensus rankings) reads
+# an unfenced page and needs no session — one login covers the site, not every fetcher.
+#
+# 'ds' (DraftSharks) used to need no account: the export was reachable on the mobile viewport
+# via an ungated `a.mobile-export-button`. DraftSharks removed that button, leaving only the
+# gated `a.export-button` -> /login, so the export now requires a session like the others.
 SOURCE_LOGIN_URLS = {
+    "fp": "https://secure.fantasypros.com/accounts/login/",
+    "ds": "https://www.draftsharks.com/login",
     "pff": "https://www.pff.com/login",
     "fpts": "https://www.fantasypoints.com/login",
     "jj": "https://www.patreon.com/login",
@@ -44,6 +56,33 @@ def load_storage_state(source: str) -> str:
             f"(opens a browser; the session is saved to {path})"
         )
     return str(path)
+
+
+def load_cookies(source: str, domain_contains: str = "") -> dict:
+    """Return a saved session's cookies as a ``{name: value}`` dict for use with `requests`.
+
+    Lets a fetcher reuse a saved session **without launching a browser** — worth it when the
+    target page is server-rendered (FantasyPros' ADP report embeds its JSON in the HTML), so
+    plain HTTP plus cookies is enough.
+
+    Args:
+        source: An auth source key (see ``SOURCE_LOGIN_URLS``).
+        domain_contains: Keep only cookies whose domain contains this substring. Sites spread
+            cookies across hosts (e.g. `secure.` vs `www.`), so filter on the registrable
+            domain rather than an exact host match.
+
+    Raises:
+        RuntimeError: if there's no saved session for ``source``.
+    """
+    path = storage_state_path(source)
+    if not path.exists():
+        raise RuntimeError(
+            f"No saved session for '{source}'. Log in once with:\n"
+            f"  ff-rankings login {source}\n"
+            f"(opens a browser; the session is saved to {path})"
+        )
+    state = json.loads(path.read_text())
+    return {c["name"]: c["value"] for c in state.get("cookies", []) if domain_contains in c.get("domain", "")}
 
 
 def save_context_state(context, source: str) -> None:

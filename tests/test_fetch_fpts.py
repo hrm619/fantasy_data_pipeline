@@ -89,8 +89,83 @@ class TestFptsLive:
     def test_fetch_fpts_captures_board(self, tmp_path):
         from fantasy_pipeline.scraper.fetch_rankings import fetch_fpts
 
-        path = fetch_fpts(str(tmp_path), min_players=90)
+        try:
+            path = fetch_fpts(str(tmp_path), min_players=90)
+        except RuntimeError as exc:
+            # Barrett publishes late, so for part of the preseason the live page serves last
+            # season's board and the season guard (correctly) refuses it. That's an upstream
+            # state, not a defect — skip. Narrowly matched on purpose: any OTHER RuntimeError
+            # (expired session, layout drift, gated export) must still fail loudly.
+            if "board, not" in str(exc):
+                pytest.skip(f"upstream has not published the current season yet: {exc}")
+            raise
+
         rows = list(csv.reader(open(path, encoding="utf-8-sig")))
         assert [h.strip() for h in rows[0]] == FPTS_EXPORT_HEADER
         data = [r for r in rows[1:] if r and r[0].strip().isdigit()]
         assert len(data) >= 90
+
+
+class _StubLocator:
+    """Minimal Playwright-locator stand-in: just enough for _assert_fpts_season."""
+
+    def __init__(self, text):
+        self._text = text
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, **kwargs):
+        return None
+
+    def text_content(self):
+        if self._text is None:
+            raise RuntimeError("no such element")
+        return self._text
+
+
+class _StubPage:
+    def __init__(self, heading):
+        self._heading = heading
+
+    def locator(self, selector):
+        return _StubLocator(self._heading)
+
+
+class TestAssertFptsSeason:
+    """The season guard must read the on-page <h1>, never document.title.
+
+    FantasyPoints templates the title to the current year while the body still serves last
+    season's board — in the 2026 preseason the title said 2026 above an <h1> saying 2025.
+    Trusting the title saves stale ranks under a filename claiming the current season.
+    """
+
+    def test_passes_when_heading_season_matches(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _assert_fpts_season
+
+        _assert_fpts_season(_StubPage("Scott Barrett's 2026 NFL Redraft Rankings"), 2026)
+
+    def test_raises_when_heading_is_previous_season(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _assert_fpts_season
+
+        with pytest.raises(RuntimeError, match="serving Barrett's 2025 board, not 2026"):
+            _assert_fpts_season(_StubPage("Scott Barrett's 2025 NFL Redraft Rankings"), 2026)
+
+    def test_raises_when_season_unparseable(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _assert_fpts_season
+
+        with pytest.raises(RuntimeError, match="Could not parse a season"):
+            _assert_fpts_season(_StubPage("Redraft Rankings"), 2026)
+
+    def test_raises_when_heading_missing(self):
+        from fantasy_pipeline.scraper.fetch_rankings import _assert_fpts_season
+
+        with pytest.raises(RuntimeError, match="Could not read the FantasyPoints rankings heading"):
+            _assert_fpts_season(_StubPage(None), 2026)
+
+    def test_year_override_allows_fetching_that_season(self):
+        # `--year 2025` is the deliberate escape hatch for pulling an older board.
+        from fantasy_pipeline.scraper.fetch_rankings import _assert_fpts_season
+
+        _assert_fpts_season(_StubPage("Scott Barrett's 2025 NFL Redraft Rankings"), 2025)

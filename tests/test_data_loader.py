@@ -12,6 +12,15 @@ class TestLoadDataCSV:
         df = load_data(tmp_csv, header_row=0)
         assert list(df.columns) == ["NAME", "AGE", "SCORE"]
 
+    def test_auto_detects_header_after_blank_line(self, tmp_csv_blank_line_before_header):
+        # Regression: PFF's export is title/blank/header/data. read_csv drops blank lines
+        # before applying `header=N`, so counting them offset the header by one and
+        # silently consumed the first player (PFF's overall rank 1) as column names.
+        df = load_data(tmp_csv_blank_line_before_header)
+        assert list(df.columns) == ["NAME", "AGE", "SCORE"]
+        assert len(df) == 2  # both data rows survive
+        assert df.iloc[0]["NAME"] == "Alice"  # the first data row is data, not a header
+
     def test_auto_detects_header_after_metadata(self, tmp_csv_with_metadata):
         df = load_data(tmp_csv_with_metadata)
         assert "NAME" in df.columns

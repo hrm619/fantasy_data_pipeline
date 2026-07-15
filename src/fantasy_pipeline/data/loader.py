@@ -41,12 +41,19 @@ def load_data(filepath: str, header_row: Optional[int] = None, sheet_name: Optio
                         if i >= 10:  # Read first 10 lines for analysis
                             break
 
+                # Index against NON-BLANK lines only: read_csv defaults to
+                # skip_blank_lines=True, so it drops blank lines *before* applying
+                # `header=N`. Counting them here would offset the header by one per blank
+                # line above it — silently consuming the first data row as column names.
+                # (PFF's export is exactly this shape: title, blank, header, players.)
+                candidates = [line for line in lines if line]
+
                 # Find the first line that looks like a proper CSV header
                 header_row_idx = 0
                 max_fields = 0
 
-                for i, line in enumerate(lines):
-                    if line and "," in line:
+                for i, line in enumerate(candidates):
+                    if "," in line:
                         field_count = len(line.split(","))
                         if field_count > max_fields:
                             max_fields = field_count

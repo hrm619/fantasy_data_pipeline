@@ -1,7 +1,9 @@
 """Tests for the FantasyPros ADP fetcher's parsing + pipeline-schema output.
 
-Uses an inline HTML fixture so the suite never hits the network.
+Uses inline HTML fixtures so the suite never hits the network.
 """
+
+import json
 
 import pytest
 
@@ -11,27 +13,46 @@ from fantasy_pipeline.scraper.fetch_rankings import (
     FP_OUTPUT_COLUMNS,
     _parse_fantasypros_adp,
     _parse_fantasypros_rankings,
-    _parse_player_cell,
+    _split_team_bye,
 )
 
 
-# Mirrors the live page's single consensus table: Rank | PlayerTeam(Bye) | POS | AVG
-ADP_HTML = """
-<html><body>
-<table>
-  <tr><th>Rank</th><th>PlayerTeam (Bye)</th><th>POS</th><th>AVG</th></tr>
-  <tr><td>1</td><td>Jahmyr GibbsDET(6)</td><td>RB1</td><td>1.5</td></tr>
-  <tr><td>2</td><td>Ja'Marr ChaseCIN(10)</td><td>WR1</td><td>3.0</td></tr>
-  <tr><td>3</td><td>Saquon BarkleyPHI(9)O</td><td>RB2</td><td>4.2</td></tr>
-</table>
-</body></html>
-"""
+def _adp_html(rows, fenced=False):
+    """Build a page embedding `window.FP.reportConfig`, as the live ADP report does."""
+    config = {
+        "type": "nfl_adp",
+        "registrationFence": fenced,
+        "table": {
+            "fields": [{"key": "rank"}, {"key": "player"}, {"key": "pos"}, {"key": "avg"}],
+            "rows": rows,
+        },
+    }
+    # The trailing `;` and sibling assignment mirror the real page, where a naive
+    # non-greedy regex could over/under-match.
+    return (
+        "<html><body><script>\n"
+        "  window.FP = window.FP || {};\n"
+        f"  window.FP.reportConfig = {json.dumps(config)};\n"
+        '  window.FP.other = {"x": 1};\n'
+        "</script></body></html>"
+    )
+
+
+def _row(rank, name, team, pos, avg):
+    return {"id": rank, "rank": rank, "player": {"id": rank, "name": name, "team": team}, "pos": pos, "avg": avg}
+
+
+ADP_ROWS = [
+    _row(1, "Jahmyr Gibbs", "DET (6)", "RB1", 1.5),
+    _row(2, "Ja'Marr Chase", "CIN (10)", "WR1", 3.0),
+    _row(3, "Saquon Barkley", "PHI (9)", "RB2", 4.2),
+]
+ADP_HTML = _adp_html(ADP_ROWS)
 
 
 class TestParseFantasyProsADP:
     def test_parses_all_player_rows(self):
-        rows = _parse_fantasypros_adp(ADP_HTML)
-        assert len(rows) == 3
+        assert len(_parse_fantasypros_adp(ADP_HTML)) == 3
 
     def test_extracts_name_team_bye_pos_adp(self):
         gibbs = _parse_fantasypros_adp(ADP_HTML)[0]
@@ -41,28 +62,39 @@ class TestParseFantasyProsADP:
         assert gibbs["POS"] == "RB"  # positional-rank digit stripped from "RB1"
         assert gibbs["ADP"] == "1.5"
 
-    def test_strips_injury_designation(self):
-        saquon = _parse_fantasypros_adp(ADP_HTML)[2]
-        assert saquon["PLAYER NAME"] == "Saquon Barkley"
-        assert saquon["TEAM"] == "PHI"
-        assert saquon["BYE"] == "9"
-
     def test_preserves_apostrophe_in_name(self):
-        chase = _parse_fantasypros_adp(ADP_HTML)[1]
-        assert chase["PLAYER NAME"] == "Ja'Marr Chase"
+        assert _parse_fantasypros_adp(ADP_HTML)[1]["PLAYER NAME"] == "Ja'Marr Chase"
 
     def test_output_keys_match_pipeline_schema_order(self):
-        row = _parse_fantasypros_adp(ADP_HTML)[0]
-        assert list(row.keys()) == ADP_OUTPUT_COLUMNS
+        assert list(_parse_fantasypros_adp(ADP_HTML)[0].keys()) == ADP_OUTPUT_COLUMNS
 
     def test_market_index_and_rt_are_blank_placeholders(self):
         row = _parse_fantasypros_adp(ADP_HTML)[0]
         assert row["MARKET INDEX"] == ""
         assert row["RT"] == ""
 
-    def test_raises_when_table_missing(self):
-        with pytest.raises(RuntimeError, match="Failed to parse ADP table"):
-            _parse_fantasypros_adp("<html><body>no table here</body></html>")
+    def test_skips_rows_without_a_player_name(self):
+        html = _adp_html(ADP_ROWS + [{"rank": 4, "player": {}, "pos": "TE1", "avg": 9.9}])
+        assert len(_parse_fantasypros_adp(html)) == 3
+
+    def test_ignores_sibling_assignments_after_the_blob(self):
+        # raw_decode must stop at the reportConfig object, not swallow `window.FP.other`.
+        assert len(_parse_fantasypros_adp(ADP_HTML)) == 3
+
+    def test_raises_when_report_config_missing(self):
+        with pytest.raises(RuntimeError, match="reportConfig"):
+            _parse_fantasypros_adp("<html><body>no data here</body></html>")
+
+    def test_raises_on_registration_fenced_teaser(self):
+        # Anonymous visitors get `registrationFence: true` plus a handful of rows; that must
+        # surface as a login instruction, not silently become a 3-player ADP board.
+        with pytest.raises(RuntimeError, match="registration-fenced"):
+            _parse_fantasypros_adp(_adp_html(ADP_ROWS, fenced=True))
+
+    def test_full_board_parses_even_when_fence_flag_set(self):
+        # A logged-in session can still carry the flag while returning the full board.
+        rows = [_row(i, f"Player {i}", "DET (6)", f"RB{i}", i) for i in range(1, 40)]
+        assert len(_parse_fantasypros_adp(_adp_html(rows, fenced=True))) == 39
 
 
 class TestSchemaContract:
@@ -71,15 +103,18 @@ class TestSchemaContract:
         assert ADP_OUTPUT_COLUMNS == COLUMN_MAPPINGS["adp"]
 
 
-class TestParsePlayerCell:
+class TestSplitTeamBye:
     def test_standard_cell(self):
-        assert _parse_player_cell("Jahmyr GibbsDET(6)") == ("Jahmyr Gibbs", "DET", "6")
+        assert _split_team_bye("DET (6)") == ("DET", "6")
 
-    def test_cell_with_injury_tag(self):
-        assert _parse_player_cell("Saquon BarkleyPHI(9)O") == ("Saquon Barkley", "PHI", "9")
+    def test_two_letter_team(self):
+        assert _split_team_bye("SF (14)") == ("SF", "14")
 
-    def test_unparseable_cell_falls_back(self):
-        assert _parse_player_cell("Weird Name") == ("Weird Name", "", "")
+    def test_cell_without_bye_falls_back(self):
+        assert _split_team_bye("FA") == ("FA", "")
+
+    def test_empty_cell(self):
+        assert _split_team_bye("") == ("", "")
 
 
 # Mirrors the `var ecrData = {...}` JSON blob embedded on FantasyPros cheatsheet pages.

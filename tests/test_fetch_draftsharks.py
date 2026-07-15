@@ -98,10 +98,24 @@ class TestDomRowMapping:
         assert row["3D VALUE"] == "100"
 
 
+@pytest.fixture
+def _stub_ds_session(monkeypatch):
+    """Stub out the saved-session lookup so browser-free tests need no `login ds`.
+
+    fetch_draftsharks resolves the session before capturing, so without this the
+    coverage-floor tests would fail in CI on a missing session rather than on the
+    behaviour under test.
+    """
+    monkeypatch.setattr(
+        "fantasy_pipeline.scraper.auth.load_storage_state",
+        lambda source: "/nonexistent/ds.json",
+    )
+
+
 class TestCoverageFloor:
-    def test_raises_when_too_few_players(self, monkeypatch, tmp_path):
+    def test_raises_when_too_few_players(self, monkeypatch, tmp_path, _stub_ds_session):
         # Simulate a tiny capture (e.g. export gated / layout drift) and verify the guard.
-        def fake_capture(output_path):
+        def fake_capture(output_path, storage_state):
             with open(output_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(DS_EXPORT_HEADER)
@@ -115,8 +129,8 @@ class TestCoverageFloor:
         with pytest.raises(RuntimeError, match="expected >= 150"):
             fetch_draftsharks(str(tmp_path), min_players=150)
 
-    def test_passes_when_above_floor(self, monkeypatch, tmp_path):
-        def fake_capture(output_path):
+    def test_passes_when_above_floor(self, monkeypatch, tmp_path, _stub_ds_session):
+        def fake_capture(output_path, storage_state):
             with open(output_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(DS_EXPORT_HEADER)
@@ -135,6 +149,15 @@ class TestCoverageFloor:
         assert [h.strip() for h in rows[0]] == DS_EXPORT_HEADER
         assert len(rows) - 1 == 200
 
+    def test_requires_a_saved_session(self, tmp_path, monkeypatch):
+        # The export is login-gated: a missing session must say so, not fail obscurely.
+        monkeypatch.setattr(
+            "fantasy_pipeline.scraper.auth.storage_state_path",
+            lambda source: __import__("pathlib").Path("/nonexistent/ds.json"),
+        )
+        with pytest.raises(RuntimeError, match="ff-rankings login ds"):
+            fetch_draftsharks(str(tmp_path))
+
 
 def _chromium_available() -> bool:
     """True only if Playwright is importable AND a Chromium binary is installed."""
@@ -151,11 +174,19 @@ def _chromium_available() -> bool:
         return False
 
 
+def _has_ds_session() -> bool:
+    from fantasy_pipeline.scraper.auth import storage_state_path
+
+    return storage_state_path("ds").exists()
+
+
 @pytest.mark.skipif(
-    not _chromium_available(),
-    reason="Playwright/Chromium not installed (run: uv pip install -e '.[headless]' && playwright install chromium)",
+    not (_chromium_available() and _has_ds_session()),
+    reason="needs Chromium + a saved DraftSharks session (`ff-rankings login ds`)",
 )
 class TestLiveFetch:
+    """Live end-to-end fetch — skipped in CI (no session/browser), runs locally."""
+
     def test_live_fetch_writes_pipeline_ready_csv(self, tmp_path):
         path = fetch_draftsharks(str(tmp_path), min_players=150)
 
@@ -165,6 +196,6 @@ class TestLiveFetch:
         header = [h.strip() for h in rows[0]]
         assert header == DS_EXPORT_HEADER
         assert len(header) == len(COLUMN_MAPPINGS["ds"])  # positional rename target
-        assert len(rows) - 1 >= 150  # full board is ~300+
+        assert len(rows) - 1 >= 150  # full board is ~550+
         # Spot-check that data rows have a numeric rank in column 0.
         assert rows[1][0].strip().isdigit()

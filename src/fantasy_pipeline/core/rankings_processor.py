@@ -38,6 +38,21 @@ from .base_processor import (
 from ..scraper.integration import auto_scrape_if_needed
 
 
+# Column prefixes that must never feed a consensus average (avg_RK / sd_RK / avg_POS RANK).
+#
+# 'adp_' is MARKET data, not an expert ranking. Including it makes `ADP Delta = ADP - avg_RK`
+# partly self-referential — ADP sits on both sides, shrinking every delta toward zero and
+# attenuating the very divergence signal the board exists to measure (~27% narrower spread
+# when it was included). 'avg_'/'sd_' guard against a derived column feeding itself if the
+# averages are ever recomputed on an already-processed frame.
+_NON_CONSENSUS_PREFIXES = ("adp_", "avg_", "sd_")
+
+
+def _is_derived_or_market_col(col: str) -> bool:
+    """True if `col` is market data or a derived stat, and so must not feed a consensus average."""
+    return col.startswith(_NON_CONSENSUS_PREFIXES)
+
+
 class RankingsProcessor:
     """
     Unified processor for fantasy football rankings from multiple sources.
@@ -45,13 +60,25 @@ class RankingsProcessor:
     Handles all league types (redraft, bestball, weekly, ros) with a single implementation.
     """
 
-    def __init__(self, league_type: str = "redraft", week: Optional[int] = None):
+    def __init__(
+        self,
+        league_type: str = "redraft",
+        week: Optional[int] = None,
+        skip_sources: Optional[List[str]] = None,
+    ):
         """
         Initialize the rankings processor.
 
         Args:
             league_type (str): Type of league ('redraft', 'bestball', 'weekly', or 'ros')
             week (int): Week number for weekly rankings (required when league_type is 'weekly')
+            skip_sources (list[str]): Source keys to leave out of this run (e.g. ['fpts']).
+                Every mapped source is otherwise REQUIRED — a missing file is a hard error —
+                so this is the supported way to build a board when a source is unavailable or
+                its data is untrustworthy (e.g. upstream still serving last season). Consensus
+                columns (avg_RK/sd_RK/avg_POS RANK) are then averaged over the remaining
+                sources, so a skip changes their meaning: prefer it over shipping bad data,
+                but record why.
         """
         if league_type not in FILE_MAPPINGS:
             raise ValueError(f"Unsupported league type: {league_type}. Supported types: {list(FILE_MAPPINGS.keys())}")
@@ -62,6 +89,7 @@ class RankingsProcessor:
         self.league_type = league_type
         self.week = week
         self.is_ros = league_type == "ros"
+        self.skip_sources = list(skip_sources or [])
 
         # Set file mapping based on league type
         if league_type == "weekly":
@@ -71,7 +99,18 @@ class RankingsProcessor:
             assert week is not None  # guaranteed by the weekly/ros guard above
             self.file_mapping = get_ros_file_mappings(week)
         else:
-            self.file_mapping = FILE_MAPPINGS[league_type]
+            # dict() copy: FILE_MAPPINGS[league_type] is module-level shared state, and
+            # filtering it in place would leak the skip into every later processor.
+            self.file_mapping = dict(FILE_MAPPINGS[league_type])
+
+        if self.skip_sources:
+            unknown = [s for s in self.skip_sources if s not in self.file_mapping]
+            if unknown:
+                raise ValueError(
+                    f"Cannot skip unknown source(s) {unknown} for league type '{league_type}'. "
+                    f"Known sources: {sorted(self.file_mapping)}"
+                )
+            self.file_mapping = {k: v for k, v in self.file_mapping.items() if k not in self.skip_sources}
 
         # Processor mapping - exclude ADP for weekly/ROS
         self.processors = {
@@ -135,6 +174,10 @@ class RankingsProcessor:
                 print(f"   League Type: {self.league_type.upper()} - Week {self.week}")
             else:
                 print(f"   League Type: {self.league_type.upper()}")
+            if self.skip_sources:
+                # Loud on purpose: a reduced board must never be mistaken for a full one.
+                print(f"   ⚠️  SKIPPING SOURCE(S): {', '.join(self.skip_sources)}")
+                print(f"      Consensus columns average the remaining: {', '.join(sorted(self.file_mapping))}")
             print("=" * 60)
 
         # Step 0: Setup directories
@@ -504,7 +547,11 @@ class RankingsProcessor:
         # For weekly/ROS rankings, skip overall RK calculations and focus on POS RANK only
         if self.league_type not in ["weekly", "ros"]:
             # 1. Calculate avg_RK (average of columns with '_RK' in title, excluding POS RANK columns)
-            rk_columns_for_avg = [col for col in df_rank.columns if "_RK" in col and "POS" not in col]
+            rk_columns_for_avg = [
+                col
+                for col in df_rank.columns
+                if "_RK" in col and "POS" not in col and not _is_derived_or_market_col(col)
+            ]
             if rk_columns_for_avg:
                 df_rank["avg_RK"] = df_rank[rk_columns_for_avg].mean(axis=1, skipna=True)
                 if verbose:
@@ -520,7 +567,9 @@ class RankingsProcessor:
                 print(f"   ℹ️ Skipping avg_RK calculation for {self.league_type} rankings")
 
         # 2. Calculate avg_POS RANK (average of columns with '_POS RANK' in title)
-        pos_rank_columns_for_avg = [col for col in df_rank.columns if "_POS RANK" in col]
+        pos_rank_columns_for_avg = [
+            col for col in df_rank.columns if "_POS RANK" in col and not _is_derived_or_market_col(col)
+        ]
         if pos_rank_columns_for_avg:
             df_rank["avg_POS RANK"] = df_rank[pos_rank_columns_for_avg].mean(axis=1, skipna=True)
             if verbose:
@@ -706,13 +755,17 @@ class RankingsProcessor:
                 df_rank["ECR ADP Delta"] = df_rank["ADP"] - df_rank["ECR"]
                 ecr_columns.append("ECR ADP Delta")
 
-        # Regular RK columns (excluding average)
+        # Regular RK columns (excluding average). This drives column ORDER, so it keeps
+        # adp_RK — the board still displays it; it just must not feed the consensus stats.
         rk_columns = [col for col in all_columns if "_RK" in col and not col.startswith("avg_")]
 
         # RK columns and calculations - skip for weekly/ROS
         rk_calcs = []
         if self.league_type not in ["weekly", "ros"]:
-            df_rank["sd_RK"] = df_rank[rk_columns].std(axis=1, skipna=True)
+            # Spread of the expert sources only — same exclusion as avg_RK, or sd_RK would
+            # measure dispersion across a set that includes the market it's compared against.
+            sd_columns = [col for col in rk_columns if not _is_derived_or_market_col(col)]
+            df_rank["sd_RK"] = df_rank[sd_columns].std(axis=1, skipna=True)
             if "ADP" in df_rank.columns:
                 df_rank["ADP Delta"] = df_rank["ADP"] - df_rank["avg_RK"]
             if "ECR" in df_rank.columns:
@@ -780,6 +833,42 @@ class RankingsProcessor:
         if verbose:
             print(f"   ✓ Filtered from {initial_rows} to {final_rows} rows")
             print(f"   ✓ Kept players with main positions: {', '.join(SUPPORTED_POSITIONS)}")
+
+        df_rank = self._format_numeric_columns(df_rank, verbose)
+
+        return df_rank
+
+    def _format_numeric_columns(self, df_rank: pd.DataFrame, verbose: bool) -> pd.DataFrame:
+        """Cast whole-number columns to ints and round calculated floats to 1dp.
+
+        Ranks/tiers are conceptually integers but arrive as float64 because a source that
+        doesn't list a player leaves NaN, which forces the column to float. Nullable 'Int64'
+        keeps them integral while still holding those gaps.
+
+        Everything else numeric is a computed/measured value (avg_RK, sd_RK, the deltas, ADP,
+        HIST_*) and gets 1dp — enough precision for a draft board, and it drops float artifacts
+        like sd_RK=0.8944271909999159 or ADP Delta=-0.3999999999999999.
+        """
+        int_like = [
+            col
+            for col in df_rank.columns
+            if not col.startswith(("avg_", "sd_"))
+            and (
+                col.endswith(("_RK", "_TIER")) or "POS RANK" in col or col in ("ADP ROUND", "POS ADP", "ECR", "POS ECR")
+            )
+        ]
+        for col in int_like:
+            # round() first: a float rank like 2.0000001 would otherwise truncate to 2.
+            df_rank[col] = pd.to_numeric(df_rank[col], errors="coerce").round().astype("Int64")
+
+        float_like = [
+            col for col in df_rank.columns if col not in int_like and pd.api.types.is_numeric_dtype(df_rank[col])
+        ]
+        for col in float_like:
+            df_rank[col] = pd.to_numeric(df_rank[col], errors="coerce").round(1)
+
+        if verbose:
+            print(f"   ✓ Formatted {len(int_like)} integer columns, {len(float_like)} float columns (1dp)")
 
         return df_rank
 
