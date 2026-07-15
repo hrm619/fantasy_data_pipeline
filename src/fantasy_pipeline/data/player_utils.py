@@ -7,7 +7,40 @@ Functions for cleaning player names and managing player key mappings.
 import pandas as pd
 import json
 import os
+import re
 from typing import Dict, Any
+
+
+# Generational suffixes sources disagree about. FantasyPros writes "James Cook III" /
+# "Chris Godwin Jr" / "Kyle Pitts Sr" where DraftSharks, PFF and PFR write the bare name;
+# player_key_dict.json carries BOTH conventions (54 names hold a suffix — "Patrick Mahomes
+# II", "Odell Beckham Jr" — while others don't), so the mismatch runs in both directions.
+#
+# Note "I" is deliberately absent: nobody is listed as "Player I", and it would strip the
+# trailing initial off a name like "Mister I".
+_GENERATIONAL_SUFFIX = re.compile(r"\s+(?:II|III|IV|V|Jr|Sr)$", re.IGNORECASE)
+
+
+def strip_generational_suffix(name: str) -> str:
+    """Return `name` without a trailing generational suffix ('James Cook III' -> 'James Cook').
+
+    Only used to build the fallback index in `add_player_ids` — never to rewrite the name a
+    source reported.
+    """
+    return _GENERATIONAL_SUFFIX.sub("", str(name)).strip()
+
+
+def build_suffix_fallback_index(player_name_to_key: Dict[str, str]) -> Dict[str, str]:
+    """Index player IDs by suffix-stripped name, for names that resolve UNAMBIGUOUSLY.
+
+    A base name claimed by two different IDs is dropped rather than guessed: real homonyms
+    exist and PFR gives them distinct IDs (two Alex Smiths -> SmitAl02/SmitAl03, 8 such
+    names here). Guessing between them is how a player inherits another's stats.
+    """
+    base_to_keys: Dict[str, set] = {}
+    for name, key in player_name_to_key.items():
+        base_to_keys.setdefault(strip_generational_suffix(name), set()).add(key)
+    return {base: next(iter(keys)) for base, keys in base_to_keys.items() if len(keys) == 1}
 
 
 def clean_player_names(df: pd.DataFrame, player_name_col: str = "PLAYER NAME") -> pd.DataFrame:
@@ -86,6 +119,16 @@ def add_player_ids(
     """
     Add PLAYER ID column to dataframe using player name mapping.
 
+    Matching is exact first. Names that match nothing then get a second lookup with their
+    generational suffix stripped — sources disagree about those ("James Cook III" in
+    FantasyPros vs "James Cook" everywhere else, and the reverse for "Patrick Mahomes II").
+    An unmatched `fp` name is not a cosmetic miss: `fp` is the pipeline's only source of POS,
+    and the board drops every row without one, so the player vanishes silently. This cost
+    James Cook, Chris Godwin and Kyle Pitts their spot on the 2026 board.
+
+    The fallback is strictly additive — exact matches are never overridden — and it declines
+    ambiguous base names (see `build_suffix_fallback_index`).
+
     Args:
         df (pd.DataFrame): DataFrame to add player IDs to
         player_name_to_key (Dict[str, str]): Mapping from player names to IDs
@@ -98,10 +141,21 @@ def add_player_ids(
     df_with_ids = df.copy()
     df_with_ids["PLAYER ID"] = df_with_ids[player_name_col].map(player_name_to_key)
 
+    unmatched = df_with_ids["PLAYER ID"].isna()
+    if unmatched.any():
+        fallback_index = build_suffix_fallback_index(player_name_to_key)
+        recovered = df_with_ids.loc[unmatched, player_name_col].map(
+            lambda n: fallback_index.get(strip_generational_suffix(n))
+        )
+        df_with_ids.loc[unmatched, "PLAYER ID"] = recovered
+
     if verbose:
         total_players = len(df_with_ids)
         matched_players = df_with_ids["PLAYER ID"].notna().sum()
         match_rate = matched_players / total_players * 100 if total_players > 0 else 0
         print(f"   Player ID matching: {matched_players}/{total_players} players matched ({match_rate:.1f}%)")
+        suffix_matches = int(unmatched.sum() - df_with_ids.loc[unmatched, "PLAYER ID"].isna().sum())
+        if suffix_matches:
+            print(f"      ({suffix_matches} matched by normalizing a generational suffix)")
 
     return df_with_ids
