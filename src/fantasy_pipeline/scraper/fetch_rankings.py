@@ -9,7 +9,6 @@ import io
 import json
 import os
 import re
-from html.parser import HTMLParser
 from typing import Optional
 
 import requests
@@ -19,102 +18,86 @@ from fantasy_pipeline.config import CURRENT_SEASON
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
-
-class _TableParser(HTMLParser):
-    """Simple HTML table parser — extracts all rows from the first data table."""
-
-    def __init__(self):
-        super().__init__()
-        self.in_table = False
-        self.in_row = False
-        self.in_cell = False
-        self.rows: list[list[str]] = []
-        self.current_row: list[str] = []
-        self.current_cell = ""
-        self.table_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "table":
-            self.table_depth += 1
-            if self.table_depth == 1:
-                self.in_table = True
-        if self.in_table and tag == "tr":
-            self.in_row = True
-            self.current_row = []
-        if self.in_row and tag in ("td", "th"):
-            self.in_cell = True
-            self.current_cell = ""
-
-    def handle_data(self, data):
-        if self.in_cell:
-            self.current_cell += data.strip()
-
-    def handle_endtag(self, tag):
-        if tag in ("td", "th") and self.in_cell:
-            self.in_cell = False
-            self.current_row.append(self.current_cell)
-        if tag == "tr" and self.in_row:
-            self.in_row = False
-            if self.current_row:
-                self.rows.append(self.current_row)
-        if tag == "table":
-            self.table_depth -= 1
-            if self.table_depth == 0:
-                self.in_table = False
-
-
 # Column layout the pipeline's 'adp' source expects (must equal COLUMN_MAPPINGS['adp']).
 # MARKET INDEX / RT are positional placeholders the pipeline discards after the
 # positional rename, so they are emitted blank. ADP holds the consensus AVG.
 ADP_OUTPUT_COLUMNS = ["PLAYER NAME", "TEAM", "BYE", "POS", "ADP", "MARKET INDEX", "RT"]
 
+# FantasyPros' ADP report page. It no longer renders an HTML <table>: the report is
+# embedded as a `window.FP.reportConfig = {...}` JSON blob (same migration the rankings
+# page made to `ecrData`). It is also registration-fenced — see FP_ADP_TEASER_ROWS.
+FP_ADP_URL = "https://www.fantasypros.com/nfl/adp/ppr-overall.php"
 
-def _parse_player_cell(cell: str) -> tuple[str, str, str]:
-    """Split a 'PlayerNameTEAM(Bye)' cell into (name, team, bye).
+# Anonymous visitors get `registrationFence: true` and a short teaser instead of the full
+# board (5 rows as of the 2026 preseason, across every scoring/position/season variant).
+# A logged-in session returns hundreds, so "more than a teaser" is our logged-in signal.
+# Kept generous: this guards against a fence, not an exact row count.
+FP_ADP_TEASER_ROWS = 25
 
-    Handles a trailing injury designation (e.g. 'O'/'Q'/'IR') after the bye.
-    Falls back to (cell, '', '') when the pattern doesn't match.
+
+def _extract_fp_report_config(html: str) -> dict:
+    """Return the `window.FP.reportConfig` JSON object embedded in a FantasyPros report page.
+
+    Uses ``raw_decode`` (brace matching) rather than a non-greedy regex: the blob contains
+    nested braces and JSON strings, so a `(\\{.*?\\});` match can terminate early.
     """
-    match = re.match(r"(.+?)([A-Z]{2,3})\((\d+)\)[A-Z]*$", cell.strip())
+    match = re.search(r"window\.FP\.reportConfig\s*=\s*", html)
+    if not match:
+        raise RuntimeError("Could not find the reportConfig JSON on the FantasyPros ADP page — layout changed")
+    try:
+        config, _ = json.JSONDecoder().raw_decode(html, match.end())
+    except ValueError as exc:
+        raise RuntimeError(f"Could not decode the FantasyPros reportConfig JSON: {exc}") from exc
+    return config
+
+
+def _split_team_bye(cell: str) -> tuple[str, str]:
+    """Split a reportConfig player's team cell ('DET (6)') into ('DET', '6').
+
+    Falls back to (cell, '') when there's no bye in parentheses (e.g. a free agent).
+    """
+    match = re.match(r"\s*([A-Z]{2,3})\s*\((\d+)\)\s*$", cell or "")
     if match:
-        return match.group(1).strip(), match.group(2), match.group(3)
-    return cell.strip(), "", ""
+        return match.group(1), match.group(2)
+    return (cell or "").strip(), ""
 
 
 def _parse_fantasypros_adp(html: str) -> list[dict]:
-    """Parse FantasyPros ADP HTML into rows keyed by ADP_OUTPUT_COLUMNS.
+    """Parse a FantasyPros ADP page into rows keyed by ADP_OUTPUT_COLUMNS.
 
-    The public page serves a single consensus table:
-        Rank | PlayerTeam(Bye) | POS | AVG
-    The consensus AVG becomes ADP; MARKET INDEX / RT are left blank (the page no
-    longer exposes per-platform ADP, and the pipeline discards those columns anyway).
+    Reads the embedded reportConfig JSON, whose `table.rows` carry:
+        {rank, player: {name, team: 'DET (6)'}, pos: 'RB1', avg: 1.5}
+    The consensus `avg` becomes ADP; MARKET INDEX / RT are left blank (the page no longer
+    exposes per-platform ADP, and the pipeline discards those columns anyway).
+
+    Raises:
+        RuntimeError: if the blob is missing, or the report is registration-fenced (which
+            yields a teaser rather than the full board — the caller needs a session).
     """
-    parser = _TableParser()
-    parser.feed(html)
+    config = _extract_fp_report_config(html)
+    rows = config.get("table", {}).get("rows", [])
 
-    if len(parser.rows) < 2:
-        raise RuntimeError(f"Failed to parse ADP table — only {len(parser.rows)} rows found")
+    if config.get("registrationFence") and len(rows) <= FP_ADP_TEASER_ROWS:
+        raise RuntimeError(
+            f"FantasyPros served a {len(rows)}-player teaser — its ADP report is registration-fenced.\n"
+            "Log in once (a free FantasyPros account) with:\n"
+            "  ff-rankings login fp"
+        )
 
     players = []
-    for row in parser.rows[1:]:
-        if len(row) < 4:
+    for row in rows:
+        player = row.get("player") or {}
+        name = (player.get("name") or "").strip()
+        if not name:
             continue
-
-        rank = row[0].strip()
-        if not rank.isdigit():
-            continue
-
-        name, team, bye = _parse_player_cell(row[1])
-        pos = re.sub(r"\d+$", "", row[2].strip())  # 'RB1' -> 'RB'
-        adp = row[3].strip()  # consensus AVG (last column)
-
+        team, bye = _split_team_bye(player.get("team", ""))
         players.append(
             {
                 "PLAYER NAME": name,
                 "TEAM": team,
                 "BYE": bye,
-                "POS": pos,
-                "ADP": adp,
+                "POS": re.sub(r"\d+$", "", str(row.get("pos", "")).strip()),  # 'RB1' -> 'RB'
+                "ADP": str(row.get("avg", "")).strip(),  # consensus AVG
                 "MARKET INDEX": "",
                 "RT": "",
             }
@@ -128,7 +111,11 @@ def fetch_fantasypros_adp(output_dir: str, year: int = CURRENT_SEASON, min_playe
 
     Writes the 7-column layout the pipeline's 'adp' source expects
     (`FantasyPros_<year>_Overall_ADP_Rankings.csv`), using the consensus AVG as ADP.
-    Per-platform ADP (e.g. Sleeper) is not exposed by the public page.
+    Per-platform ADP (e.g. Sleeper) is not exposed by the page.
+
+    Requires a saved FantasyPros session (`ff-rankings login fp`) — the report is
+    registration-fenced and serves anonymous visitors a teaser. The page is server-rendered,
+    so this reuses the session's cookies over plain HTTP; no browser is launched.
 
     Args:
         output_dir: Directory to save the CSV (the pipeline's update/ folder).
@@ -139,17 +126,20 @@ def fetch_fantasypros_adp(output_dir: str, year: int = CURRENT_SEASON, min_playe
         Path to the saved CSV file.
 
     Raises:
-        RuntimeError: if fewer than `min_players` rows parse.
+        RuntimeError: if there's no saved session, the report is fenced, or fewer than
+            `min_players` rows parse.
     """
-    url = "https://www.fantasypros.com/nfl/adp/ppr-overall.php"
-    response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    from fantasy_pipeline.scraper.auth import load_cookies
+
+    cookies = load_cookies("fp", domain_contains="fantasypros.com")
+    response = requests.get(FP_ADP_URL, headers={"User-Agent": USER_AGENT}, cookies=cookies, timeout=30)
     response.raise_for_status()
 
     players = _parse_fantasypros_adp(response.text)
     if len(players) < min_players:
         raise RuntimeError(
             f"Only {len(players)} players parsed (expected >= {min_players}); "
-            "FantasyPros ADP page layout may have changed"
+            "the FantasyPros session may have expired, or the ADP page layout changed"
         )
 
     filename = f"FantasyPros_{year}_Overall_ADP_Rankings.csv"
@@ -304,15 +294,16 @@ DS_OUTPUT_COLUMNS = [
     "3D VALUE",
 ]
 
-# A mobile UA + small viewport are what reveals the *ungated* export button. On
-# desktop the only visible "Export Rankings" control is gated (href="/login"); the
-# mobile-export-button instead runs the client-side `handleExport` Blob download,
-# which produces the full board with no login.
-_DS_MOBILE_UA = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
-)
-_DS_MOBILE_VIEWPORT = {"width": 390, "height": 844}
+# The export control, once logged in. The page (Alpine.js) renders two `div.export-button`
+# variants and toggles them on `exportContainerOptionPrint`: one wraps a Print/Export
+# dropdown, the other calls `handleExport` directly. We want the latter — the client-side
+# Blob download that emits the full board. Selecting on the `@click` handler rather than a
+# class keeps us on the export path and off the Print sibling.
+#
+# History: this export used to be reachable anonymously via `a.mobile-export-button` on a
+# mobile viewport. DraftSharks removed that button; logged out, the only control left is
+# `a.export-button.gated` -> /login. Hence the session requirement, and no more mobile UA.
+_DS_EXPORT_SELECTOR = 'div.export-button[\\@click="handleExport"]'
 
 
 def _require_playwright():
@@ -345,11 +336,11 @@ def _ds_dom_row_to_output(cells: list[str]) -> dict | None:
     return dict(zip(DS_OUTPUT_COLUMNS, cells[: len(DS_OUTPUT_COLUMNS)]))
 
 
-def _ds_capture_export_csv(output_path: str) -> int:
-    """Drive a headless browser to click the ungated Export button and save its CSV.
+def _ds_capture_export_csv(output_path: str, storage_state: str) -> int:
+    """Drive a logged-in headless browser to click Export and save its CSV.
 
-    Returns the number of data rows written. Uses the mobile viewport/UA so the
-    `handleExport` (Blob) export button is reachable rather than the gated /login one.
+    Returns the number of data rows written. Requires a saved session: DraftSharks
+    gates the export behind login (see _DS_EXPORT_SELECTOR).
     """
     sync_playwright = _require_playwright()
     with sync_playwright() as p:
@@ -360,24 +351,30 @@ def _ds_capture_export_csv(output_path: str) -> int:
                 "Could not launch Chromium. Install the browser with:\n  playwright install chromium"
             ) from exc
         try:
-            context = browser.new_context(
-                accept_downloads=True,
-                viewport=_DS_MOBILE_VIEWPORT,
-                user_agent=_DS_MOBILE_UA,
-            )
+            context = browser.new_context(accept_downloads=True, storage_state=storage_state)
             page = context.new_page()
             page.goto(DRAFTSHARKS_URL, wait_until="domcontentloaded", timeout=60000)
 
-            # The ungated export is the mobile variant running the client-side
-            # `handleExport` Blob download (the "Export" action — not "Print", and
-            # not the gated auction-values export).
-            export_btn = page.locator("a.mobile-export-button")
-            export_btn.wait_for(state="attached", timeout=30000)
+            export_btn = page.locator(_DS_EXPORT_SELECTOR)
+            try:
+                # 'visible', not merely 'attached': logged out, the handleExport variant is
+                # absent and its hidden Print-dropdown sibling would satisfy 'attached'.
+                export_btn.wait_for(state="visible", timeout=30000)
+            except Exception as exc:
+                raise RuntimeError(
+                    "DraftSharks' Export control isn't available — the session has probably expired "
+                    "(logged out, the export is gated behind /login).\nRe-authenticate with:\n"
+                    "  ff-rankings login ds"
+                ) from exc
 
             with page.expect_download(timeout=30000) as download_info:
                 export_btn.click()
             download = download_info.value
             download.save_as(output_path)
+
+            from fantasy_pipeline.scraper.auth import save_context_state
+
+            save_context_state(context, "ds")  # sliding session — capture rotated cookies
         finally:
             browser.close()
 
@@ -395,28 +392,33 @@ def _ds_capture_export_csv(output_path: str) -> int:
 
 
 def fetch_draftsharks(output_dir: str, min_players: int = 150) -> str:
-    """Fetch DraftSharks half-PPR rankings via a headless browser and save a CSV.
+    """Fetch DraftSharks half-PPR rankings via a logged-in headless browser and save a CSV.
 
-    DraftSharks' rankings page is a JS-rendered SPA: static HTML exposes only ~25
-    players with no projections, so a real browser is required. This drives the
-    page's own client-side "Export Rankings" button (`handleExport`) and captures
-    the resulting Blob download — that CSV is the exact 14-column layout the pipeline
-    consumes (renamed positionally into COLUMN_MAPPINGS['ds']).
+    DraftSharks' rankings page is a JS-rendered SPA: the DOM renders only ~25 players with
+    no projections, so the full board is only obtainable through the page's own client-side
+    "Export" button (`handleExport`). This drives that button and captures the resulting Blob
+    download — the exact 14-column layout the pipeline consumes (renamed positionally into
+    COLUMN_MAPPINGS['ds']).
+
+    Requires a saved session (`ff-rankings login ds`). This fetcher previously needed no
+    account, reaching an ungated mobile-only export button; DraftSharks removed it.
 
     Args:
         output_dir: Directory to save the CSV (the pipeline's update/ folder).
         min_players: Coverage floor — raise if fewer rows are captured (the full
-            board is ~300+, so this guards against silent breakage).
+            board is ~550+, so this guards against silent breakage).
 
     Returns:
         Path to the saved CSV file ('rankings-half-ppr.csv').
 
     Raises:
-        RuntimeError: if Playwright/Chromium is unavailable, the export header
-            drifts, or fewer than `min_players` rows are captured.
+        RuntimeError: if there's no saved session, Playwright/Chromium is unavailable,
+            the export header drifts, or fewer than `min_players` rows are captured.
     """
+    from fantasy_pipeline.scraper.auth import load_storage_state
+
     output_path = os.path.join(output_dir, DS_OUTPUT_FILENAME)
-    row_count = _ds_capture_export_csv(output_path)
+    row_count = _ds_capture_export_csv(output_path, load_storage_state("ds"))
 
     if row_count < min_players:
         raise RuntimeError(
@@ -451,38 +453,48 @@ PFF_EXPORT_HEADER = [
 ]
 
 
+# PFF's CSV export control. `data-testid` is the stable hook — the accessible name is
+# "Download CSV" while the visible text is just "CSV", so name/text matching is brittle
+# (and matched the *locked* button, producing a bare download timeout).
+PFF_CSV_BUTTON_SELECTOR = 'button[data-testid="csvDownloadButton"]'
+
+
 def _pff_output_filename(year: int) -> str:
     """Filename matching FILE_MAPPINGS' 'Draft-rankings-export' prefix."""
     return f"Draft-rankings-export-{year}.csv"
 
 
-def _click_pff_export(page) -> None:
-    """Click PFF's rankings Export/Download control.
+def _pff_export_is_locked(button) -> bool:
+    """True if PFF's CSV button renders a lock icon (account lacks the export entitlement).
 
-    PFF's exact selector isn't knowable without a logged-in DOM, so this tries the
-    common patterns in order (role/text). Adjust here if the live page differs —
-    keep the candidates list as the single place selectors live.
+    An un-entitled (but logged-in) account still gets the button; it just wears a lock and
+    redirects to /subscribe on click. Entitled, the same slot holds a download icon.
     """
-    candidates = [
-        lambda: page.get_by_role("button", name=re.compile(r"export", re.I)),
-        lambda: page.get_by_role("link", name=re.compile(r"export", re.I)),
-        lambda: page.get_by_role("button", name=re.compile(r"download", re.I)),
-        lambda: page.get_by_text(re.compile(r"^\s*export\s*$", re.I)),
-    ]
-    last_exc = None
-    for make in candidates:
-        try:
-            loc = make().first
-            loc.wait_for(state="visible", timeout=8000)
-            loc.click()
-            return
-        except Exception as exc:  # selector not present / not clickable — try next
-            last_exc = exc
-            continue
-    raise RuntimeError(
-        "Could not find PFF's Export/Download control. The page layout may have "
-        f"changed — update _click_pff_export selectors. Last error: {last_exc}"
-    )
+    try:
+        return bool(button.locator('[data-testid*="lockIcon"], [class*="lockIcon"]').count())
+    except Exception:
+        return False
+
+
+def _click_pff_export(page) -> None:
+    """Click PFF's CSV export control, failing loudly if the account isn't entitled."""
+    button = page.locator(PFF_CSV_BUTTON_SELECTOR).first
+    try:
+        button.wait_for(state="visible", timeout=15000)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not find PFF's CSV export control ({PFF_CSV_BUTTON_SELECTOR}). "
+            "The session may have expired, or the page layout changed."
+        ) from exc
+
+    if _pff_export_is_locked(button):
+        raise RuntimeError(
+            "PFF's CSV export is locked for this account — it redirects to /subscribe.\n"
+            "The saved session is logged in but lacks the CSV entitlement. If your "
+            "subscription is active, refresh the session with:\n  ff-rankings login pff"
+        )
+
+    button.click()
 
 
 def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
@@ -621,6 +633,51 @@ def _select_fpts_barrett(page) -> None:
         ) from exc
 
 
+# The on-page rankings heading, e.g. "Scott Barrett's 2025 NFL Redraft Rankings".
+# This is the ONLY trustworthy season signal on the page — see _assert_fpts_season.
+_FPTS_HEADING_SELECTOR = "h1"
+_FPTS_HEADING_SEASON_RE = re.compile(r"(20\d\d)\s+NFL\s+Redraft\s+Rankings", re.I)
+
+
+def _assert_fpts_season(page, year: int) -> None:
+    """Raise unless the rendered board is actually `year`'s rankings.
+
+    **Do not trust `document.title` for the season.** FantasyPoints templates it to the
+    *current* year while the body still serves the previous season's board: in the 2026
+    preseason the title read "Scott Barrett's 2026 Redraft Fantasy Football Rankings"
+    above an `<h1>` of "Scott Barrett's 2025 NFL Redraft Rankings" (updated 2025-08-30).
+    Without this guard the fetcher silently saves last season's ranks as
+    `Scott Barrett <year> Redraft Rankings.csv` — a filename that lies about its contents,
+    which then quietly contaminates avg_RK. (Barrett publishes late; expect this to fire
+    through the early preseason.)
+    """
+    try:
+        heading = page.locator(_FPTS_HEADING_SELECTOR).first
+        heading.wait_for(state="attached", timeout=10000)
+        text = (heading.text_content() or "").strip()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not read the FantasyPoints rankings heading ({_FPTS_HEADING_SELECTOR}) to "
+            "verify the season — the page layout may have changed."
+        ) from exc
+
+    match = _FPTS_HEADING_SEASON_RE.search(text)
+    if not match:
+        raise RuntimeError(
+            f"Could not parse a season from the FantasyPoints heading {text!r}; refusing to "
+            "save rankings that can't be confirmed as the right season."
+        )
+
+    found = int(match.group(1))
+    if found != year:
+        raise RuntimeError(
+            f"FantasyPoints is serving Barrett's {found} board, not {year} "
+            f"(heading: {text!r}). His {year} rankings are probably not published yet — "
+            f"the page title claims {year} but the data is {found}'s. Re-run once they're live, "
+            f"or pass --year {found} to fetch that season deliberately."
+        )
+
+
 def _click_fpts_csv_download(page) -> None:
     """Click the DataTables 'Download as CSV' button (fires a client-side Blob download)."""
     btn = page.locator("button.buttons-csv, button:has-text('Download as CSV')").first
@@ -628,11 +685,12 @@ def _click_fpts_csv_download(page) -> None:
     btn.click()
 
 
-def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url: str) -> int:
+def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url: str, year: int) -> int:
     """Drive a logged-in headless browser to export Barrett's rankings; save the CSV.
 
     Reuses the saved session (`storage_state`); no password handled here. Selects
-    Barrett's board, then captures its "Download as CSV". Returns the data-row count.
+    Barrett's board, verifies it is `year`'s (see _assert_fpts_season), then captures its
+    "Download as CSV". Returns the data-row count.
     """
     sync_playwright = _require_playwright()
     with sync_playwright() as p:
@@ -652,6 +710,9 @@ def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url:
             page.goto(rankings_url, wait_until="networkidle", timeout=60000)
 
             _select_fpts_barrett(page)
+            # Verify the season BEFORE downloading — a stale board must never reach disk
+            # under a filename claiming the current year.
+            _assert_fpts_season(page, year)
             with page.expect_download(timeout=30000) as download_info:
                 _click_fpts_csv_download(page)
             download = download_info.value
@@ -710,7 +771,7 @@ def fetch_fpts(
 
     storage_state = load_storage_state("fpts")
     output_path = os.path.join(output_dir, _fpts_output_filename(year))
-    row_count = _fpts_capture_export_csv(output_path, storage_state, rankings_url)
+    row_count = _fpts_capture_export_csv(output_path, storage_state, rankings_url, year)
 
     if row_count < min_players:
         raise RuntimeError(
@@ -958,21 +1019,20 @@ def fetch_jj(
 
 
 def _validate_pff_session(context) -> bool:
-    """True if the PFF rankings page shows its export control (i.e. we're logged in)."""
+    """True if PFF's CSV export is present *and unlocked* (i.e. logged in and entitled).
+
+    The presence of the button is not enough: an un-entitled account still renders it,
+    carrying a lock icon and redirecting to /subscribe on click. Checking only for the
+    control reports a session as valid while every fetch fails on a download timeout, so
+    the lock is the signal that matters.
+    """
     page = context.new_page()
     try:
         page.goto(PFF_RANKINGS_URL, wait_until="domcontentloaded", timeout=40000)
-        page.wait_for_timeout(2500)
-        for make in (
-            lambda: page.get_by_role("button", name=re.compile(r"export|download", re.I)),
-            lambda: page.get_by_role("link", name=re.compile(r"export|download", re.I)),
-        ):
-            try:
-                make().first.wait_for(state="attached", timeout=6000)
-                return True
-            except Exception:
-                continue
-        return False
+        page.wait_for_timeout(3000)
+        button = page.locator(PFF_CSV_BUTTON_SELECTOR)
+        button.first.wait_for(state="attached", timeout=8000)
+        return not _pff_export_is_locked(button.first)
     except Exception:
         return False
     finally:
@@ -1004,7 +1064,42 @@ def _validate_jj_session(context) -> bool:
         return False
 
 
+def _validate_fp_session(context) -> bool:
+    """True if FantasyPros' ADP report returns the full board rather than a fenced teaser.
+
+    Uses the context's request API (which carries its cookies) — no page render needed,
+    since the report is server-rendered into the HTML.
+    """
+    try:
+        response = context.request.get(FP_ADP_URL, timeout=30000)
+        if not response.ok:
+            return False
+        config = _extract_fp_report_config(response.text())
+        return len(config.get("table", {}).get("rows", [])) > FP_ADP_TEASER_ROWS
+    except Exception:
+        return False
+
+
+def _validate_ds_session(context) -> bool:
+    """True if DraftSharks' rankings page shows the ungated `handleExport` control.
+
+    Logged out, that variant isn't rendered at all — only `a.export-button.gated` -> /login.
+    """
+    page = context.new_page()
+    try:
+        page.goto(DRAFTSHARKS_URL, wait_until="domcontentloaded", timeout=40000)
+        page.wait_for_timeout(3000)
+        page.locator(_DS_EXPORT_SELECTOR).first.wait_for(state="visible", timeout=8000)
+        return True
+    except Exception:
+        return False
+    finally:
+        page.close()
+
+
 _SESSION_VALIDATORS = {
+    "fp": _validate_fp_session,
+    "ds": _validate_ds_session,
     "pff": _validate_pff_session,
     "fpts": _validate_fpts_session,
     "jj": _validate_jj_session,

@@ -26,6 +26,18 @@ def _build_rankings_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-path", help="Path to update directory containing ranking files")
     parser.add_argument("--player-key-path", help="Path to player key dictionary JSON file")
     parser.add_argument("--base-data-dir", help="Base directory containing latest, update, archive folders")
+    parser.add_argument(
+        "--skip-source",
+        action="append",
+        default=[],
+        metavar="SOURCE",
+        dest="skip_sources",
+        help=(
+            "Build the board without this source (repeatable), e.g. --skip-source fpts. "
+            "Every mapped source is otherwise required. Consensus columns then average only "
+            "the remaining sources."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     return parser
 
@@ -47,7 +59,14 @@ def _fetch_adp_command(argv) -> int:
     parser.add_argument(
         "--min-players", type=int, default=200, help="Coverage floor — fail if fewer players parse (default: 200)"
     )
+    parser.add_argument(
+        "--auto-login", action="store_true", help="Open a login window if the FantasyPros session has expired"
+    )
     ns = parser.parse_args(argv)
+
+    # ADP is registration-fenced; the saved session lives under the 'fp' auth key.
+    if not _ensure_session_if_requested(ns.auto_login, "fp"):
+        return 1
 
     try:
         os.makedirs(ns.output, exist_ok=True)
@@ -79,7 +98,13 @@ def _fetch_ds_command(argv) -> int:
         default=150,
         help="Coverage floor — fail if fewer players are captured (default: 150)",
     )
+    parser.add_argument(
+        "--auto-login", action="store_true", help="Open a login window if the DraftSharks session has expired"
+    )
     ns = parser.parse_args(argv)
+
+    if not _ensure_session_if_requested(ns.auto_login, "ds"):
+        return 1
 
     try:
         os.makedirs(ns.output, exist_ok=True)
@@ -222,12 +247,14 @@ def _refresh_all_command(argv) -> int:
     os.makedirs(update_dir, exist_ok=True)
 
     # (label, source, thunk) — each thunk writes one source file into update_dir. `source`
-    # is the paywalled-session key (None for free sources). These are the redraft fetchers;
-    # weekly/ROS HW is auto-scraped by the pipeline itself.
+    # is the saved-session key (None for sources needing no account). These are the redraft
+    # fetchers; weekly/ROS HW is auto-scraped by the pipeline itself.
+    # Note 'adp' and 'fp' hit the same site but differ: only the ADP report is
+    # registration-fenced, so 'adp' needs the 'fp' session while 'fp' itself does not.
     fetchers = [
-        ("adp  (FantasyPros ADP)", None, lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
+        ("adp  (FantasyPros ADP)", "fp", lambda: fetch_fantasypros_adp(update_dir, year=ns.year)),
         ("fp   (FantasyPros rankings)", None, lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
-        ("ds   (DraftSharks)", None, lambda: fetch_draftsharks(update_dir)),
+        ("ds   (DraftSharks)", "ds", lambda: fetch_draftsharks(update_dir)),
         ("pff  (PFF)", "pff", lambda: fetch_pff(update_dir, year=ns.year)),
         ("fpts (FantasyPoints/Barrett)", "fpts", lambda: fetch_fpts(update_dir, year=ns.year)),
         ("jj   (JJ Zachariason)", "jj", lambda: fetch_jj(update_dir, year=ns.year)),
@@ -257,8 +284,13 @@ def _refresh_all_command(argv) -> int:
     failed = [(label, detail) for label, ok, detail in results if not ok]
     print(f"\n📥 Fetched {len(results) - len(failed)}/{len(results)} sources.")
     if failed:
-        if any(kw in d.lower() for _, d in failed for kw in ("session", "login", "timeout")):
-            print("   Tip: paywalled sources may need a fresh session — `ff-rankings login <pff|fpts|jj>`.")
+        if any(kw in d.lower() for _, d in failed for kw in ("session", "login", "timeout", "fence", "teaser")):
+            print("   Tip: gated sources may need a fresh session — `ff-rankings login <fp|ds|pff|fpts|jj>`.")
+        # A source that hasn't published the season yet is expected in the early preseason,
+        # not breakage — say so rather than leaving it looking like a broken fetcher.
+        if any("board, not" in d for _, d in failed):
+            print("   Note: a source is still serving last season's board and was refused (correct —")
+            print("   it would otherwise be saved under this season's filename). Re-run once it's live.")
 
     if ns.no_consolidate:
         print("\n⏭  --no-consolidate set; leaving the fetched files in update/ (not consolidating).")
@@ -376,9 +408,13 @@ def _login_command(argv) -> int:
 
     parser = argparse.ArgumentParser(
         prog="ff-rankings login",
-        description="Log in once to a paywalled source and save the session for headless fetches",
+        description="Log in once to an account-gated source and save the session for headless fetches",
     )
-    parser.add_argument("source", choices=sorted(SOURCE_LOGIN_URLS), help="Paywalled source to log in to")
+    parser.add_argument(
+        "source",
+        choices=sorted(SOURCE_LOGIN_URLS),
+        help="Account-gated source to log in to (fp is a free account; ds/pff/fpts/jj are subscriptions)",
+    )
     parser.add_argument(
         "--timeout-minutes", type=int, default=10, help="How long the login window stays open (default: 10)"
     )
@@ -435,7 +471,7 @@ def main(args=None):
         return 1
 
     try:
-        processor = RankingsProcessor(args.league_type, args.week)
+        processor = RankingsProcessor(args.league_type, args.week, skip_sources=getattr(args, "skip_sources", None))
 
         output_file = processor.process_rankings(
             data_path=args.data_path,

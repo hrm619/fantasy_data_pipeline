@@ -63,8 +63,27 @@ COLUMN_MAPPINGS = {
         "CEILING PROJ",
         "3D VALUE",
     ],
-    # Hayden Winks data
-    "hw": ["PLAYER NAME", "RK", "UNDERDOG ADP", "DIFF", "FINISH-2024", "TEAM", "POS", "POS RANK", "NOTES", "ID"],
+    # Hayden Winks data (Underdog "Table Download" export).
+    # Underdog reshuffled this export for 2026: the column order changed, `Diff`/`Notes` were
+    # dropped, `Finish2024` became two stat columns, and two id columns were added (10 -> 11 cols).
+    # These names are positional labels, not source headers — only PLAYER NAME/TEAM/POS/POS RANK/RK
+    # survive BaseProcessor._standardize_output; the rest are discarded. Keep the ADP column named
+    # UNDERDOG ADP (not ADP) so it isn't promoted into the output and confused with FantasyPros ADP.
+    # Source order: Player, Team, Pos, PosRank, Rank, ADP, Per Game <yr>, Season <yr>, Team_id,
+    #               Sport_radar_id, Id
+    "hw": [
+        "PLAYER NAME",
+        "TEAM",
+        "POS",
+        "POS RANK",
+        "RK",
+        "UNDERDOG ADP",
+        "PRIOR PER GAME",
+        "PRIOR SEASON FINISH",
+        "TEAM ID",
+        "SPORT RADAR ID",
+        "ID",
+    ],
     # PFF data
     "pff": ["RK", "PLAYER NAME", "TEAM", "POS", "POS RANK", "BYE", "PFF ADP", "PROJ", "AUCTION"],
     # ADP data
@@ -163,7 +182,7 @@ ROS_COLUMN_MAPPINGS = {
 #   - the fetcher filename defaults (fetch_rankings.py imports it as the `year` default)
 #   - the CLI `--year` defaults (cli/rankings.py)
 #   - the HW scraper article slug (get_hw_scraper_url's `season` default)
-CURRENT_SEASON = 2025
+CURRENT_SEASON = 2026
 
 # File lookup patterns for different league types
 FILE_MAPPINGS = {
