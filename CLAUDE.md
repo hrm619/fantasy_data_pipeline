@@ -754,6 +754,23 @@ Adding names via fuzzy matching is what produced the ID collisions above — a s
 threshold. After any bulk update run `uv run python scripts/fix_player_key_collisions.py --dry-run` (or just
 `pytest tests/test_player_key_integrity.py`) to check nothing was mapped onto another player's ID.
 
+**An unmatched `fp` name silently DELETES a player from the board.** `_create_consolidated_rankings` takes
+`PLAYER NAME`/`POS`/`TEAM` from the **`fp` source only**, and `_organize_final_dataframe` then drops every row
+whose `POS` isn't in `SUPPORTED_POSITIONS`. So a player `fp` doesn't match doesn't merely lose his FantasyPros
+rank — he has no POS, and vanishes. No warning; the board is just shorter.
+- This bit in 2026: FantasyPros began writing **generational suffixes** (`James Cook III`, `Chris Godwin Jr`,
+  `Kyle Pitts Sr`) where every other source and PFR write the bare name. `add_player_ids` is an **exact dict
+  lookup** (there is no fuzzy fallback here, whatever the note above implies), so all three matched nothing and
+  were **absent from the board entirely**.
+- The mismatch runs **both ways**: `player_key_dict.json` stores 54 names *with* a suffix (`Patrick Mahomes II`,
+  `Odell Beckham Jr`) and others without, so a source writing the bare name can miss too.
+- `add_player_ids` now retries unmatched names with `strip_generational_suffix`. It is **strictly additive** —
+  exact matches always win, so nothing that resolves today can be re-pointed — and `build_suffix_fallback_index`
+  **refuses ambiguous bases**: 8 base names map to 2+ IDs (the real homonyms — two Alex Smiths →
+  `SmitAl02`/`SmitAl03`). Guessing between those is how a player inherits another's stats.
+- **Symptom to watch for:** a well-known player quietly missing. Cheap check on a fresh redraft board —
+  `ADP ROUND` 1 should hold exactly **12** players; it held 11 while James Cook was falling through.
+
 **Weekly Rankings Issues**: Ensure `--week` parameter is provided and file mappings in `get_weekly_file_mappings()` are correct
 
 **JJ Weekly Column Mismatch**: If JJ weekly processing fails with column count errors:
