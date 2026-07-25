@@ -443,6 +443,11 @@ class RankingsProcessor:
             print("\n🔑 Step 4: Adding player IDs using player key dictionary...")
 
         player_key_dict, player_name_to_key = load_player_key_mapping(player_key_path)
+        # Ids the dict already records, so the seed can tell a provisional id that is merely
+        # UNRECORDED (actionable — run add_missing_players.py) from one already on file. Once
+        # a rookie is recorded he keeps his NEW: id forever, so counting all of them would
+        # nag about players that need nothing.
+        self._recorded_ids = set(player_key_dict)
 
         if verbose:
             print("   ✓ Player name to key mapping saved to: data/player_name_to_key.json")
@@ -510,11 +515,13 @@ class RankingsProcessor:
         df_rank = fp_base[fp_base["PLAYER ID"].notna()].drop_duplicates(subset=["PLAYER ID"]).copy()
 
         if verbose:
-            provisional = int(df_rank["PLAYER ID"].map(is_provisional_id).sum())
-            print(f"   ✓ Seeded {len(df_rank)} players from fp")
-            if provisional:
+            recorded_ids = getattr(self, "_recorded_ids", set())
+            provisional = df_rank["PLAYER ID"].map(is_provisional_id)
+            unrecorded = int((provisional & ~df_rank["PLAYER ID"].isin(recorded_ids)).sum())
+            print(f"   ✓ Seeded {len(df_rank)} players from fp ({int(provisional.sum())} on a provisional id)")
+            if unrecorded:
                 print(
-                    f"   ⚠️  {provisional} carry a provisional id (unknown to player_key_dict.json) — "
+                    f"   ⚠️  {unrecorded} of those are not in player_key_dict.json yet — "
                     "run scripts/add_missing_players.py to record them"
                 )
 

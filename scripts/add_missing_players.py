@@ -119,6 +119,38 @@ def find_alias_target(
     return matched, name_to_key[matched], SequenceMatcher(None, name, matched).ratio()
 
 
+def sync_from_pfr(
+    player_key: Dict[str, List[str]], pfr_ids: Dict[str, Tuple[set, int]]
+) -> Tuple[List[dict], List[dict]]:
+    """Return (additions, ambiguous) for every PFR player the dict is missing.
+
+    This closes the gap at its source. Nothing keeps `player_key_dict.json` in step with new
+    `combined_data.csv` rows, so the dict lags PFR by a season: after the 2025 ingest it was
+    missing 50 ids, ALL of them last seen in 2025. Those players then reach the board as
+    unknown names and get minted a provisional id — losing the HIST_* stats PFR is holding
+    for them under the id the dict never recorded (Jahdae Walker, Jacob Saylors, Zavier
+    Scott, Theo Wease).
+
+    Names PFR gives several ids are real homonyms (two Alex Smiths). Adding one to both ids
+    would make the reverse name->id mapping arbitrary, so they're reported, never synced.
+    """
+    known_names = {n for names in player_key.values() for n in (names if isinstance(names, list) else [names])}
+
+    additions: List[dict] = []
+    ambiguous: List[dict] = []
+    for name, (ids, last_season) in sorted(pfr_ids.items()):
+        if name in known_names:
+            continue
+        if len(ids) > 1:
+            ambiguous.append({"name": name, "existing_id": ", ".join(sorted(ids)), "last_season": last_season})
+            continue
+        pid = next(iter(ids))
+        additions.append(
+            {"name": name, "existing_id": pid, "last_season": last_season, "new_entry": pid not in player_key}
+        )
+    return additions, ambiguous
+
+
 def classify(
     board: pd.DataFrame,
     player_key: Dict[str, List[str]],
@@ -218,17 +250,43 @@ def main() -> int:
         action="store_true",
         help="Also attach ALIAS spellings to their existing id (review the list first)",
     )
+    parser.add_argument(
+        "--sync-pfr",
+        action="store_true",
+        help="Also record every PFR player the dict is missing, board or no board (run after ff-stats ingest)",
+    )
     ns = parser.parse_args()
 
-    board_path = ns.board or latest_board()
-    board = pd.read_csv(board_path)
     with open(ns.player_key) as f:
         player_key: Dict[str, List[str]] = json.load(f)
     pfr_positions = load_pfr_positions(ns.combined_data)
     pfr_ids = load_pfr_ids(ns.combined_data)
 
-    print(f"Board:      {board_path}  ({len(board)} players)")
     print(f"Player key: {ns.player_key}  ({len(player_key)} ids)")
+
+    synced: List[dict] = []
+    if ns.sync_pfr:
+        synced, ambiguous = sync_from_pfr(player_key, pfr_ids)
+        _print_table(
+            "PFR SYNC — in PFR's data but not in the key dict; recorded under their real id",
+            synced,
+            [
+                ("PLAYER NAME", "name"),
+                ("REAL ID", "existing_id"),
+                ("LAST SEASON", "last_season"),
+                ("NEW DICT ENTRY", "new_entry"),
+            ],
+        )
+        if ambiguous:
+            _print_table(
+                "PFR SYNC — SKIPPED: PFR gives these names several ids (real homonyms); resolve by hand",
+                ambiguous,
+                [("PLAYER NAME", "name"), ("PFR IDS", "existing_id"), ("LAST SEASON", "last_season")],
+            )
+
+    board_path = ns.board or latest_board()
+    board = pd.read_csv(board_path)
+    print(f"\nBoard:      {board_path}  ({len(board)} players)")
 
     rookies, pfr_known, aliases = classify(board, player_key, pfr_positions, pfr_ids, ns.cutoff)
 
@@ -271,7 +329,16 @@ def main() -> int:
 
     written = 0
     if ns.apply:
-        # PFR-known first: ground truth, and it restores HIST_* the provisional id was losing.
+        # PFR sync first: pure ground truth, and it subsumes most of the PFR-KNOWN bucket.
+        for s in synced:
+            names = player_key.setdefault(s["existing_id"], [])
+            if s["name"] not in names:
+                names.append(s["name"])
+                written += 1
+        if synced:
+            print(f"\n✓ Synced {written} players from PFR")
+
+        # PFR-known next: ground truth, and it restores HIST_* the provisional id was losing.
         recorded = 0
         for p in pfr_known:
             names = player_key.setdefault(p["existing_id"], [])
@@ -302,7 +369,9 @@ def main() -> int:
 
     if written:
         with open(ns.player_key, "w") as f:
-            json.dump(player_key, f, indent=4, sort_keys=True)
+            # indent=2 and insertion order, matching the other player-key scripts. Sorting
+            # here would reorder all ~2300 entries and bury 96 additions in a 14k-line diff.
+            json.dump(player_key, f, indent=2)
         print(f"✓ Wrote {ns.player_key}")
         print("\nRe-run ff-rankings to pick these up. Then validate:")
         print("  uv run python scripts/fix_player_key_collisions.py --dry-run")

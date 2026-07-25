@@ -922,9 +922,30 @@ that is not the same as "this player is new",** so PFR ground truth is checked *
    vs Shrader-the-kicker). A name PFR gives **several** ids is a real homonym and is never auto-resolved.
 
 - **Symptom of cases 1 and 3:** a *veteran* on the board with a `NEW:` id and blank `HIST_*` columns.
-  `ff-rankings` prints a provisional-id count each run.
-- **The dict lags PFR by a season.** Cases 1 and 3 exist because nothing syncs `player_key_dict.json`
-  with new `combined_data.csv` rows — worth re-running this script after every `ff-stats ingest`.
+  Each run `ff-rankings` prints how many seeded players are on a provisional id, and how many of those
+  are **not recorded yet** — only the second number is actionable.
+
+**`--sync-pfr` closes the gap at its source.** Cases 1 and 3 existed because nothing kept the dict in
+step with new `combined_data.csv` rows: after the 2025 ingest it was missing **50 ids, every one of them
+last seen in 2025** — exactly one season of lag. `--sync-pfr` records every PFR player the dict lacks,
+board or no board, using PFR's own id (no fuzzy matching). Names PFR gives **several** ids are real
+homonyms and are reported, never synced.
+
+**Run it after every `ff-stats ingest`, and rebuild the stats afterwards** — the order matters:
+
+```bash
+uv run python scripts/add_missing_players.py --sync-pfr                      # review
+uv run python scripts/add_missing_players.py --sync-pfr --apply --apply-aliases
+uv run ff-stats --season <N>        # REQUIRED: see below
+uv run ff-rankings --league-type redraft
+```
+
+`ff-stats` must be re-run *after* the sync. The aggregation excludes null-id rows from its joins (the
+null-join phantom-row guard), so a player the dict didn't know was **dropped from
+`rankings_ready_historical_stats_*` entirely** — syncing the dict alone doesn't bring him back, because
+the stats file still predates it. Regenerating took that file from **592 distinct ids + a NaN group to
+642 with none**, restoring `HIST_*` for all seven affected players (Kenny Gainwell 182.8, Zavier Scott
+30.2, Jahdae Walker 23.7, Theo Wease 22.9, Scotty Miller 10.7, Jacob Saylors 1.1).
 
 **Weekly Rankings Issues**: Ensure `--week` parameter is provided and file mappings in `get_weekly_file_mappings()` are correct
 

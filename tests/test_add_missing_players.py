@@ -12,7 +12,7 @@ itself doesn't carry ("Kenny" vs PFR's "Kenneth Gainwell").
 
 import pandas as pd
 
-from scripts.add_missing_players import classify, find_alias_target
+from scripts.add_missing_players import classify, find_alias_target, sync_from_pfr
 
 
 def _board(rows):
@@ -113,3 +113,40 @@ class TestFindAliasTarget:
     def test_unrelated_name_is_not_matched(self):
         hit = find_alias_target("Jeremiyah Love", "RB", ["James Cook"], {"James Cook": "CookJa01"}, {})
         assert hit is None
+
+
+class TestSyncFromPfr:
+    """Nothing kept player_key_dict.json in step with new combined_data.csv rows, so the dict
+    lagged PFR by a season: after the 2025 ingest it was missing 50 ids, ALL last seen in
+    2025. Those players then reached the board as unknown names and were minted provisional
+    ids, losing the HIST_* PFR was holding under the id the dict never recorded."""
+
+    def test_records_a_player_the_dict_never_picked_up(self):
+        additions, ambiguous = sync_from_pfr({}, {"Jahdae Walker": ({"WalkJa03"}, 2025)})
+        assert not ambiguous
+        assert additions[0]["existing_id"] == "WalkJa03"
+        assert additions[0]["new_entry"] is True
+
+    def test_skips_players_already_known(self):
+        player_key = {"CookJa01": ["James Cook"]}
+        additions, _ = sync_from_pfr(player_key, {"James Cook": ({"CookJa01"}, 2025)})
+        assert additions == []
+
+    def test_adds_a_new_name_to_an_id_the_dict_already_has(self):
+        # PFR renamed Scott Miller to "Scotty Miller" in 2025 under the same id.
+        player_key = {"MillSc01": ["Scott Miller"]}
+        additions, _ = sync_from_pfr(player_key, {"Scotty Miller": ({"MillSc01"}, 2025)})
+        assert additions[0]["existing_id"] == "MillSc01"
+        assert additions[0]["new_entry"] is False  # id present, name is not
+
+    def test_homonyms_are_reported_not_synced(self):
+        # Two real Alex Smiths. Adding the name to both ids makes the reverse name->id
+        # mapping arbitrary, so it is never done automatically.
+        additions, ambiguous = sync_from_pfr({}, {"Alex Smith": ({"SmitAl02", "SmitAl03"}, 2025)})
+        assert additions == []
+        assert ambiguous[0]["name"] == "Alex Smith"
+
+    def test_does_not_mutate_the_player_key(self):
+        player_key = {"CookJa01": ["James Cook"]}
+        sync_from_pfr(player_key, {"Jahdae Walker": ({"WalkJa03"}, 2025)})
+        assert player_key == {"CookJa01": ["James Cook"]}
