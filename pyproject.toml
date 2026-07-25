@@ -28,6 +28,7 @@ dependencies = [
 [project.scripts]
 ff-rankings = "fantasy_pipeline.cli.rankings:main"
 ff-stats = "fantasy_pipeline.cli.stats:main"
+ff-expert-analysis = "fantasy_pipeline.cli.expert_analysis:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

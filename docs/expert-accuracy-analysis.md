@@ -1,7 +1,17 @@
 # Expert Accuracy & Bias Analysis
 
-**Status:** design agreed, not yet built. Tracked here because it is a research workstream, not
-pipeline work — it reads a frozen snapshot and writes its own tables.
+**Status:** built. `ff-expert-analysis build` loads the tables; `ff-expert-analysis report` prints the
+scorecards. Tracked here because it is a research workstream, not pipeline work — it reads a frozen
+snapshot and writes its own tables.
+
+```bash
+uv run ff-expert-analysis build            # adapters -> ~/.fantasy-data/fantasy_data.db
+uv run ff-expert-analysis report           # scorecard, bias, conviction
+uv run ff-expert-analysis report --metric fpts_half --season 2024
+```
+
+Code: `src/fantasy_pipeline/analysis/{historical,scorecard}.py`, tests in
+`tests/test_expert_analysis.py`.
 
 Goal: score historical preseason expert rankings against what players actually did, and surface
 systematic bias. The dataset is a **snapshot** — two seasons that will not change — so the build is
@@ -220,7 +230,35 @@ adding one is an adapter plus a load.
 5. Conviction analysis: §4.
 6. Notebook / report.
 
-## 7. Open questions
+## 7. Things the build discovered
+
+Two defects surfaced only once the data was actually joined. Both are recorded in code with the
+reasoning, because both produce plausible numbers rather than errors.
+
+- **JaTavion Sanders appears 16 times in the 2025 snapshot.** That board predates the player-key
+  collision fix, and `SandJa01` mapped to both the TE and kicker Jason Sanders. The copies *disagree*
+  (ECR 234 on some rows, 254 on others) because they are two different players' rankings under one id.
+  `_collapse_duplicate_players` collapses identical copies and **drops disagreeing ones** — there is no
+  way to tell which rank is the TE's, and picking one would score a kicker's ranking as a tight end's.
+- **Realized rank must be computed within the set the expert ranked.** Scoring against the league-wide
+  `pos_finish_rank` made *every* expert look uniformly ~10 ranks optimistic, because experts rank ~217
+  players out of a ~620-player outcome universe: a player placed WR30 "finishes WR45 of 180". Both
+  sides have to be permutations of the same set (`pos_finish_rank_in_set`).
+
+Two design corrections followed from it:
+
+- **No signed rank error by position.** Within a position the expert's ranks and the realized ranks are
+  permutations of the same set, so the signed mean is *exactly zero by construction* — it would have
+  read as "no bias" for every expert. Signed **points** error carries the answer instead.
+- **Positional ranks are derived from overall ranks**, not read from the published columns. Most
+  experts publish an overall board only, and the published positional columns are not dependable —
+  the 2025 snapshot's `POS ECR` is all 1s. A published positional rank is used only where the expert
+  gave no overall rank (2024 Hayden Winks).
+- **Conviction thresholds are taken among actual disagreements.** Players an expert placed exactly
+  where the market did carry `delta_value == 0`; leaving them in the quantile basis drags the cutoff to
+  zero and promotes trivial calls into "big" ones.
+
+## 8. Open questions
 
 - Games-played floor for PPG: 8 is a placeholder; sensitivity check it.
 - Tier segmentation method: natural breaks vs largest-gap vs 1-D k-means — pick by stability under
