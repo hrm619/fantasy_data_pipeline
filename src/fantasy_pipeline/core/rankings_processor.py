@@ -25,7 +25,13 @@ from ..config import (
     get_ros_file_mappings,
 )
 from ..data.loader import load_data
-from ..data.player_utils import clean_player_names, load_player_key_mapping, add_player_ids
+from ..data.player_utils import (
+    clean_player_names,
+    load_player_key_mapping,
+    add_player_ids,
+    mint_provisional_id,
+    is_provisional_id,
+)
 from .base_processor import (
     process_fpts_data,
     process_fantasypros_data,
@@ -204,13 +210,13 @@ class RankingsProcessor:
         dataframes = self._load_and_standardize_data(data_path, files, verbose)
 
         # Step 3: Add player IDs
-        player_key_dict, dataframes = self._add_player_ids(dataframes, player_key_path, verbose)
+        _, dataframes = self._add_player_ids(dataframes, player_key_path, verbose)
 
         # Step 4: Process all data sources
         dataframes = self._process_data_sources(dataframes, verbose)
 
         # Step 5: Create consolidated rankings
-        df_rank = self._create_consolidated_rankings(dataframes, player_key_dict, verbose)
+        df_rank = self._create_consolidated_rankings(dataframes, verbose)
 
         # Step 6: Calculate average rankings
         df_rank = self._calculate_average_rankings(df_rank, verbose)
@@ -442,15 +448,26 @@ class RankingsProcessor:
             print("   ✓ Player name to key mapping saved to: data/player_name_to_key.json")
             print(f"   ✓ Total mappings created: {len(player_name_to_key)}")
 
-        # Add PLAYER ID column to each dataframe
+        # Add PLAYER ID column to each dataframe. `mint_missing` gives players the key dict
+        # doesn't know (every rookie — the dict is keyed by PFR ids, which need NFL history)
+        # a name-derived provisional id. Every source mints the same id for the same name, so
+        # their rows still join; without it those players carry a null id and never assemble.
         for key, df in dataframes.items():
-            # Skip adding player IDs if already present (e.g., from HW scraper output)
+            # The HW scraper pre-matches its own ids, but leaves unknown players null — mint
+            # those rather than skipping the frame wholesale, or its rookies stay id-less.
             if "PLAYER ID" in df.columns:
-                if verbose:
+                unknown = df["PLAYER ID"].isna() & df["PLAYER NAME"].notna() if "PLAYER NAME" in df.columns else None
+                if unknown is not None and unknown.any():
+                    df = df.copy()
+                    df.loc[unknown, "PLAYER ID"] = df.loc[unknown, "PLAYER NAME"].map(mint_provisional_id)
+                    dataframes[key] = df
+                    if verbose:
+                        print(f"   ℹ️  {key}: PLAYER ID present; minted {int(unknown.sum())} provisional id(s)")
+                elif verbose:
                     print(f"   ℹ️  {key}: PLAYER ID already present, skipping ID assignment")
                 continue
 
-            dataframes[key] = add_player_ids(df, player_name_to_key, verbose=verbose)
+            dataframes[key] = add_player_ids(df, player_name_to_key, verbose=verbose, mint_missing=True)
 
         return player_key_dict, dataframes
 
@@ -475,19 +492,31 @@ class RankingsProcessor:
 
         return dataframes
 
-    def _create_consolidated_rankings(
-        self, dataframes: Dict[str, pd.DataFrame], player_key_dict: Dict, verbose: bool
-    ) -> pd.DataFrame:
+    def _create_consolidated_rankings(self, dataframes: Dict[str, pd.DataFrame], verbose: bool) -> pd.DataFrame:
         """Create consolidated ranking dataframe."""
         if verbose:
             print("\n🔗 Step 7: Creating consolidated ranking dataframe...")
 
-        # Start with player keys and get base info from fp source
-        df_rank = pd.DataFrame({"PLAYER ID": list(player_key_dict.keys())})
+        # The board's universe is who `fp` ranks — NOT who player_key_dict.json knows.
+        #
+        # Seeding from the dict's keys silently capped the board at players with PFR history:
+        # a rookie has no PFR id, so however many sources ranked him there was no seed row to
+        # merge onto and he vanished without a warning. In 2026 that cost 75 skill players,
+        # 7 inside the top 150 (Jeremiyah Love at ECR 35, Carnell Tate at 64, Jordyn Tyson 85).
+        # Dict-only players were never reachable anyway — they arrive here with a null POS and
+        # are dropped by the SUPPORTED_POSITIONS filter in _organize_final_dataframe — so this
+        # only ever adds players, it never removes one.
+        fp_base = dataframes["fp"][["PLAYER ID", "PLAYER NAME", "POS", "TEAM"]]
+        df_rank = fp_base[fp_base["PLAYER ID"].notna()].drop_duplicates(subset=["PLAYER ID"]).copy()
 
-        df_rank = df_rank.merge(
-            dataframes["fp"][["PLAYER ID", "PLAYER NAME", "POS", "TEAM"]], on="PLAYER ID", how="left"
-        )
+        if verbose:
+            provisional = int(df_rank["PLAYER ID"].map(is_provisional_id).sum())
+            print(f"   ✓ Seeded {len(df_rank)} players from fp")
+            if provisional:
+                print(
+                    f"   ⚠️  {provisional} carry a provisional id (unknown to player_key_dict.json) — "
+                    "run scripts/add_missing_players.py to record them"
+                )
 
         # Clean player names
         df_rank["PLAYER NAME"] = df_rank["PLAYER NAME"].str.replace(r"[^\w\s]", "", regex=True)

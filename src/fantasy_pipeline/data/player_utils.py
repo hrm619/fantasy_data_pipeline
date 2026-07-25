@@ -43,6 +43,36 @@ def build_suffix_fallback_index(player_name_to_key: Dict[str, str]) -> Dict[str,
     return {base: next(iter(keys)) for base, keys in base_to_keys.items() if len(keys) == 1}
 
 
+# Marks an id this pipeline minted, not one sourced from Pro-Football-Reference.
+PROVISIONAL_ID_PREFIX = "NEW:"
+
+
+def mint_provisional_id(name: str) -> str:
+    """Mint a provisional PLAYER ID for a player `player_key_dict.json` doesn't know.
+
+    The dict is keyed by Pro-Football-Reference ids, which only exist once a player has NFL
+    history — so every incoming rookie is absent from it. Since the board joins its sources on
+    PLAYER ID, an id-less player can't be assembled at all and silently vanishes (this cost the
+    entire 2026 rookie class its place: Jeremiyah Love at ECR 35, Carnell Tate at 64).
+
+    The id is derived from the name alone, so every source mints the SAME id for the same
+    player without coordination — that is what lets their rows join. It is deliberately NOT
+    PFR-shaped: PFR's scheme has padding quirks ("CJ Ham" -> "HamxC.00") that make a guessed id
+    a coin flip against colliding with a real player. The `NEW:` prefix keeps these obviously
+    provisional, so when PFR assigns a real id after the player debuts you can reconcile
+    deliberately rather than discovering a silent duplicate.
+
+    Note punctuation is stripped but case is preserved: sources agree on Title Case, and
+    `test_punctuation_does_not_split_a_player_across_sources` pins the punctuation half.
+    """
+    return PROVISIONAL_ID_PREFIX + re.sub(r"[^A-Za-z0-9]", "", str(name))
+
+
+def is_provisional_id(player_id: Any) -> bool:
+    """True if `player_id` was minted by `mint_provisional_id` rather than sourced from PFR."""
+    return isinstance(player_id, str) and player_id.startswith(PROVISIONAL_ID_PREFIX)
+
+
 def clean_player_names(df: pd.DataFrame, player_name_col: str = "PLAYER NAME") -> pd.DataFrame:
     """
     Clean player names by removing special characters and normalizing suffixes.
@@ -114,7 +144,11 @@ def load_player_key_mapping(
 
 
 def add_player_ids(
-    df: pd.DataFrame, player_name_to_key: Dict[str, str], player_name_col: str = "PLAYER NAME", verbose: bool = True
+    df: pd.DataFrame,
+    player_name_to_key: Dict[str, str],
+    player_name_col: str = "PLAYER NAME",
+    verbose: bool = True,
+    mint_missing: bool = False,
 ) -> pd.DataFrame:
     """
     Add PLAYER ID column to dataframe using player name mapping.
@@ -129,17 +163,27 @@ def add_player_ids(
     The fallback is strictly additive — exact matches are never overridden — and it declines
     ambiguous base names (see `build_suffix_fallback_index`).
 
+    With `mint_missing`, whatever is still unmatched gets a provisional id derived from its
+    name (see `mint_provisional_id`) instead of a null. This is what lets rookies onto the
+    board at all: `player_key_dict.json` is keyed by PFR ids, which a player without NFL
+    history simply does not have yet. It is opt-in because the stats aggregation deliberately
+    relies on null ids to EXCLUDE unknown players from its joins — minting there would
+    resurrect the null-join phantom-row bug in a new form.
+
     Args:
         df (pd.DataFrame): DataFrame to add player IDs to
         player_name_to_key (Dict[str, str]): Mapping from player names to IDs
         player_name_col (str): Name of the column containing player names
         verbose (bool): Whether to print match statistics
+        mint_missing (bool): Mint a provisional id for names the dictionary doesn't know
 
     Returns:
         pd.DataFrame: DataFrame with PLAYER ID column added
     """
     df_with_ids = df.copy()
-    df_with_ids["PLAYER ID"] = df_with_ids[player_name_col].map(player_name_to_key)
+    # astype(object): when nothing matches, .map() yields an all-NaN float64 column and
+    # writing ids into it is a dtype change pandas now warns on (and will later refuse).
+    df_with_ids["PLAYER ID"] = df_with_ids[player_name_col].map(player_name_to_key).astype(object)
 
     unmatched = df_with_ids["PLAYER ID"].isna()
     if unmatched.any():
@@ -149,13 +193,26 @@ def add_player_ids(
         )
         df_with_ids.loc[unmatched, "PLAYER ID"] = recovered
 
+    minted = 0
+    if mint_missing:
+        still_unmatched = df_with_ids["PLAYER ID"].isna() & df_with_ids[player_name_col].notna()
+        minted = int(still_unmatched.sum())
+        if minted:
+            df_with_ids.loc[still_unmatched, "PLAYER ID"] = df_with_ids.loc[still_unmatched, player_name_col].map(
+                mint_provisional_id
+            )
+
     if verbose:
         total_players = len(df_with_ids)
         matched_players = df_with_ids["PLAYER ID"].notna().sum()
         match_rate = matched_players / total_players * 100 if total_players > 0 else 0
         print(f"   Player ID matching: {matched_players}/{total_players} players matched ({match_rate:.1f}%)")
-        suffix_matches = int(unmatched.sum() - df_with_ids.loc[unmatched, "PLAYER ID"].isna().sum())
+        suffix_matches = int(unmatched.sum() - df_with_ids.loc[unmatched, "PLAYER ID"].isna().sum()) - minted
         if suffix_matches:
             print(f"      ({suffix_matches} matched by normalizing a generational suffix)")
+        if minted:
+            print(
+                f"      ({minted} unknown to player_key_dict.json — minted a provisional '{PROVISIONAL_ID_PREFIX}' id)"
+            )
 
     return df_with_ids

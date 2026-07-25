@@ -4,7 +4,9 @@ from fantasy_pipeline.data.player_utils import (
     add_player_ids,
     build_suffix_fallback_index,
     clean_player_names,
+    is_provisional_id,
     load_player_key_mapping,
+    mint_provisional_id,
     strip_generational_suffix,
 )
 
@@ -167,3 +169,65 @@ class TestAddPlayerIdsSuffixFallback:
         df = pd.DataFrame({"PLAYER NAME": ["James Cook", "James Cook III"]})
         out = add_player_ids(df, {"James Cook": "CookJa01"}, verbose=False)
         assert list(out["PLAYER ID"]) == ["CookJa01", "CookJa01"]
+
+
+class TestProvisionalIds:
+    """`player_key_dict.json` is keyed by PFR ids, which need NFL history — so every rookie is
+    absent from it. The board joins its sources on PLAYER ID, so an id-less player couldn't be
+    assembled and vanished silently (75 skill players in 2026, 7 inside the top 150)."""
+
+    def test_minted_id_is_marked_provisional(self):
+        assert mint_provisional_id("Jeremiyah Love") == "NEW:JeremiyahLove"
+        assert is_provisional_id("NEW:JeremiyahLove")
+
+    def test_real_pfr_ids_are_not_provisional(self):
+        assert not is_provisional_id("CookJa01")
+        assert not is_provisional_id(None)
+        assert not is_provisional_id(float("nan"))
+
+    def test_punctuation_does_not_split_a_player_across_sources(self):
+        # The id must not depend on how a source punctuates: one player, one id, or his
+        # per-source rows can't join and he lands on the board with empty ranks.
+        assert mint_provisional_id("De'Von Achane") == mint_provisional_id("DeVon Achane")
+        assert mint_provisional_id("A.J. Brown") == mint_provisional_id("AJ Brown")
+
+    def test_distinct_players_get_distinct_ids(self):
+        assert mint_provisional_id("Chris Bell") != mint_provisional_id("Skyler Bell")
+
+    def test_minting_is_opt_in(self):
+        # The stats aggregation relies on null ids to EXCLUDE unknown players from its joins;
+        # minting there would resurrect the null-join phantom-row bug in a new form.
+        df = pd.DataFrame({"PLAYER NAME": ["Jeremiyah Love"]})
+        out = add_player_ids(df, {"James Cook": "CookJa01"}, verbose=False)
+        assert pd.isna(out["PLAYER ID"].iloc[0])
+
+    def test_mints_for_a_player_the_dict_does_not_know(self):
+        df = pd.DataFrame({"PLAYER NAME": ["Jeremiyah Love"]})
+        out = add_player_ids(df, {"James Cook": "CookJa01"}, verbose=False, mint_missing=True)
+        assert out["PLAYER ID"].iloc[0] == "NEW:JeremiyahLove"
+
+    def test_minting_never_overrides_a_real_id(self):
+        df = pd.DataFrame({"PLAYER NAME": ["James Cook", "Jeremiyah Love"]})
+        out = add_player_ids(df, {"James Cook": "CookJa01"}, verbose=False, mint_missing=True)
+        assert list(out["PLAYER ID"]) == ["CookJa01", "NEW:JeremiyahLove"]
+
+    def test_suffix_fallback_still_wins_over_minting(self):
+        # A known player who merely gained a suffix must resolve to his real id, not a new one.
+        df = pd.DataFrame({"PLAYER NAME": ["James Cook III"]})
+        out = add_player_ids(df, {"James Cook": "CookJa01"}, verbose=False, mint_missing=True)
+        assert out["PLAYER ID"].iloc[0] == "CookJa01"
+
+    def test_ambiguous_homonym_is_minted_not_guessed(self):
+        # Two real Alex Smiths: the fallback declines to guess, so he gets his own provisional
+        # id rather than inheriting the wrong player's stats.
+        df = pd.DataFrame({"PLAYER NAME": ["Alex Smith II"]})
+        out = add_player_ids(
+            df, {"Alex Smith": "SmitAl02", "Alex Smith Jr": "SmitAl03"}, verbose=False, mint_missing=True
+        )
+        assert out["PLAYER ID"].iloc[0] == "NEW:AlexSmithII"
+
+    def test_a_null_name_is_not_minted_an_id(self):
+        df = pd.DataFrame({"PLAYER NAME": [None, "Jeremiyah Love"]})
+        out = add_player_ids(df, {}, verbose=False, mint_missing=True)
+        assert pd.isna(out["PLAYER ID"].iloc[0])
+        assert out["PLAYER ID"].iloc[1] == "NEW:JeremiyahLove"

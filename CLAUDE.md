@@ -494,6 +494,7 @@ src/
 
 scripts/
 ├── update_player_key.py            # Player key maintenance tools
+├── add_missing_players.py          # Record players minted a provisional NEW: id (rookies vs. respellings)
 └── fix_player_key_collisions.py    # Repair + validate player-key ID collisions (vs PFR truth)
 
 docs/
@@ -846,7 +847,9 @@ df.to_csv("hw-week7.csv", index=False)
 
 **Column Count Mismatches**: Verify `COLUMN_MAPPINGS` entry has same number of columns as source file
 
-**Missing Player IDs**: Update `player_key_dict.json` with new player name variations using `scripts/update_player_key.py`.
+**Missing Player IDs**: For a player the dict has never heard of (rookies), use
+`scripts/add_missing_players.py` — `update_player_key.py` only attaches *aliases* to players already in
+the dict, so it cannot record a rookie at all. Update name variations with `scripts/update_player_key.py`.
 Adding names via fuzzy matching is what produced the ID collisions above — a shared first name clears the 85%
 threshold. After any bulk update run `uv run python scripts/fix_player_key_collisions.py --dry-run` (or just
 `pytest tests/test_player_key_integrity.py`) to check nothing was mapped onto another player's ID.
@@ -867,6 +870,61 @@ rank — he has no POS, and vanishes. No warning; the board is just shorter.
   `SmitAl02`/`SmitAl03`). Guessing between those is how a player inherits another's stats.
 - **Symptom to watch for:** a well-known player quietly missing. Cheap check on a fresh redraft board —
   `ADP ROUND` 1 should hold exactly **12** players; it held 11 while James Cook was falling through.
+
+### Rookies: `player_key_dict.json` cannot describe them, so the board is seeded from `fp`
+
+The same "player quietly missing" symptom had a **second, structural** cause, and it deleted far more
+players than the suffix bug. `_create_consolidated_rankings` used to seed the board from the key dict:
+
+```python
+df_rank = pd.DataFrame({"PLAYER ID": list(player_key_dict.keys())})   # <- the old universe
+```
+
+`player_key_dict.json` is keyed by **PFR ids, which only exist once a player has NFL history**. A rookie
+has none, so there was no seed row to merge onto and he vanished no matter how many sources ranked him.
+In 2026 that cost **75 skill players, 7 inside the top 150** — Jeremiyah Love (ECR 35, ADP 20), Carnell
+Tate (64), Jadarian Price (75), Jordyn Tyson (85), Makai Lemon (96), KC Concepcion (131).
+
+Two changes fix it:
+- **The seed is now `fp`'s players** — the board's universe is who the experts rank, not who PFR knows.
+  This can only *add* players: a dict-only player arrived with a null `POS` and was already dropped by
+  the `SUPPORTED_POSITIONS` filter. Verified on the 2026 board: 311 → 365 players, **0 lost, 0 duplicates**.
+- **`add_player_ids(..., mint_missing=True)`** gives an unknown name a provisional `NEW:<Name>` id
+  (`mint_provisional_id`) instead of a null. The id is derived from the name alone, so **every source
+  mints the same id for the same player** and their rows still join — that is the whole point; without it
+  a rookie reaches the board with empty ranks. Punctuation is stripped so `De'Von Achane` and `DeVon
+  Achane` agree.
+  - It is **deliberately not PFR-shaped**. PFR's scheme has padding quirks (`CJ Ham → HamxC.00`), so a
+    guessed id is a coin flip against colliding with a real player. `NEW:` keeps these obviously
+    provisional for later reconciliation.
+  - It is **opt-in**, and only the rankings path passes it. The stats aggregation *relies* on null ids to
+    exclude unknown players from its joins — minting there would resurrect the null-join phantom-row bug
+    (6936 bogus rows) in a new form.
+
+**Recording them: `scripts/add_missing_players.py`** (dry-run by default) reads the newest board and
+splits its provisional players three ways. **A provisional id only means the DICT doesn't know the name —
+that is not the same as "this player is new",** so PFR ground truth is checked *before* any fuzzy match:
+
+1. **PFR-KNOWN** — *not* new: PFR has history under this exact name, so its real id wins. 5 of the 2026
+   board's 54 were this, and 4 held ids **the dict had never picked up at all** (`Jahdae Walker`
+   `WalkJa03`, `Jacob Saylors` `SaylJa00`, `Zavier Scott` `ScotZa00`, all 2025 debutants; `Theo Wease Jr`
+   → PFR's `Theo Wease` `WeasTh00`). Minting for these would have stranded a real player on a `NEW:` id
+   and cost him his `HIST_*`. Also matches **suffix-stripped** (the board's "Jr" vs PFR's bare name),
+   position-guarded. `--apply`.
+2. **ROOKIE** — unknown to the dict *and* to PFR; gets its own `NEW:` entry. 47 in 2026. Note this really
+   means "no PFR fantasy production", so a fringe veteran who never recorded a stat lands here too.
+   `--apply`.
+3. **ALIAS** — a spelling PFR itself doesn't carry: PFR says **"Kenneth Gainwell"**, every source says
+   **"Kenny"**, so he minted an id and **silently lost the `HIST_*` under `GainKe00`**. Also Mitch/Mitchell
+   Tinsley. Attaches to the **existing** id under its own `--apply-aliases` flag, because fuzzy matching is
+   exactly how the JaTavion Sanders / Spencer Rattler collisions were created. Suggestions are
+   position-checked against PFR and **a mismatch is rejected outright** (that alone catches Rattler-the-QB
+   vs Shrader-the-kicker). A name PFR gives **several** ids is a real homonym and is never auto-resolved.
+
+- **Symptom of cases 1 and 3:** a *veteran* on the board with a `NEW:` id and blank `HIST_*` columns.
+  `ff-rankings` prints a provisional-id count each run.
+- **The dict lags PFR by a season.** Cases 1 and 3 exist because nothing syncs `player_key_dict.json`
+  with new `combined_data.csv` rows — worth re-running this script after every `ff-stats ingest`.
 
 **Weekly Rankings Issues**: Ensure `--week` parameter is provided and file mappings in `get_weekly_file_mappings()` are correct
 

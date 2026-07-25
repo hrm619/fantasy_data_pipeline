@@ -175,3 +175,47 @@ class TestSkipSources:
         proc = RankingsProcessor("redraft", skip_sources=["fpts", "jj"])
         assert "fpts" not in proc.file_mapping and "jj" not in proc.file_mapping
         assert "adp" in proc.file_mapping
+
+
+class TestBoardSeeding:
+    """The board's universe is who `fp` ranks, NOT who player_key_dict.json knows.
+
+    Seeding from the key dict capped the board at players with PFR history, so a rookie —
+    who has no PFR id — had no seed row to merge onto and vanished however many sources
+    ranked him. 75 skill players in 2026, 7 inside the top 150.
+    """
+
+    def _fp(self, rows):
+        import pandas as pd
+
+        return pd.DataFrame(rows, columns=["PLAYER ID", "PLAYER NAME", "POS", "TEAM"])
+
+    def test_rookie_with_a_provisional_id_reaches_the_board(self):
+        proc = RankingsProcessor("redraft")
+        fp = self._fp([["CookJa01", "James Cook", "RB", "BUF"], ["NEW:JeremiyahLove", "Jeremiyah Love", "RB", "ARI"]])
+        out = proc._create_consolidated_rankings({"fp": fp}, verbose=False)
+        assert "Jeremiyah Love" in list(out["PLAYER NAME"])
+
+    def test_seed_is_fp_not_the_key_dict(self):
+        # A player the dict knows but fp doesn't rank is not on the board. He never was —
+        # he arrived with a null POS and was dropped by the SUPPORTED_POSITIONS filter — so
+        # this change only ever adds players.
+        proc = RankingsProcessor("redraft")
+        fp = self._fp([["CookJa01", "James Cook", "RB", "BUF"]])
+        out = proc._create_consolidated_rankings({"fp": fp}, verbose=False)
+        assert list(out["PLAYER NAME"]) == ["James Cook"]
+
+    def test_id_less_rows_are_dropped_not_merged(self):
+        # pandas joins null == null, so leaving null ids in the seed cross-joins every
+        # unmatched player against every other — the phantom-row bug that produced 6936
+        # bogus rows in the stats aggregation.
+        proc = RankingsProcessor("redraft")
+        fp = self._fp([[None, "Nobody At All", "WR", "FA"], ["CookJa01", "James Cook", "RB", "BUF"]])
+        out = proc._create_consolidated_rankings({"fp": fp}, verbose=False)
+        assert list(out["PLAYER NAME"]) == ["James Cook"]
+
+    def test_duplicate_ids_do_not_multiply_the_board(self):
+        proc = RankingsProcessor("redraft")
+        fp = self._fp([["CookJa01", "James Cook", "RB", "BUF"], ["CookJa01", "James Cook", "RB", "BUF"]])
+        out = proc._create_consolidated_rankings({"fp": fp}, verbose=False)
+        assert len(out) == 1
