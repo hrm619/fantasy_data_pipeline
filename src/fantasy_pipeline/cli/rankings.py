@@ -267,7 +267,7 @@ def _refresh_all_command(argv) -> int:
     All seven redraft sources — including Hayden Winks (Yahoo) — now have fetchers, so the full
     board can refresh with no manual downloads.
     """
-    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON, FILE_MAPPINGS
     from fantasy_pipeline import RankingsProcessor
     from fantasy_pipeline.scraper.fetch_rankings import (
         fetch_draftsharks_adp,
@@ -360,28 +360,51 @@ def _refresh_all_command(argv) -> int:
         print("\n⛔ --strict set and some fetchers failed; not consolidating.")
         return 1
 
-    # Redraft consolidation needs a Hayden Winks board. It's now fetched above (Yahoo), but if
-    # that fetch failed (e.g. Yahoo throttling) there's no hw-yahoo file — check so we fail
-    # helpfully instead of with a cryptic "No file found for key 'hw'".
-    if not any(f.startswith("hw-yahoo") for f in os.listdir(update_dir)):
-        print("\n⚠️  Can't consolidate yet — the Hayden Winks (hw) source didn't land:")
-        print("     - hw (Hayden Winks) → hw-yahoo-<season>.csv")
-        print("   Its fetch above failed (see the ❌ line). Retry it on its own with:")
-        print("     ff-rankings fetch-hw")
-        print("   then consolidate: ff-rankings --league-type redraft")
+    # Every source in file_mapping is required, so one missing file aborts the whole
+    # consolidation. Rather than fail on the first one, work out which sources actually landed
+    # and skip the rest — a late-publishing source (Barrett's board is routinely unpublished
+    # through the early preseason) should not cost you the other six.
+    #
+    # Keyed off the files on disk, not off which fetchers raised: a fetcher can fail while a
+    # still-usable file from an earlier run sits in update/, and that file should be used.
+    # Mirrors the processor's own `startswith` matching so the two can't disagree.
+    present = os.listdir(update_dir)
+
+    def _landed(prefix) -> bool:
+        prefixes = prefix if isinstance(prefix, (list, tuple)) else [prefix]
+        return any(f.startswith(p) for p in prefixes for f in present)
+
+    missing = sorted(key for key, prefix in FILE_MAPPINGS["redraft"].items() if not _landed(prefix))
+
+    # fp and adp are structural, not merely one opinion among several: the board's universe,
+    # PLAYER NAME/POS/TEAM all come from fp, and _organize_final_dataframe drops rows on ADP
+    # (skipping adp raises KeyError: ['ADP']). Without either there is no board to build.
+    blocking = [k for k in missing if k in ("fp", "adp")]
+    if blocking:
+        print(f"\n⚠️  Can't consolidate — {' and '.join(blocking)} didn't land, and the board can't be built without")
+        print("   them (fp supplies every player's name/position/team; adp is what the board is ranked against).")
+        print("   Retry just that source, e.g. `ff-rankings fetch-fp` / `ff-rankings fetch-adp`, then:")
+        print("     ff-rankings --league-type redraft")
         print("\n⏭  The other sources are fetched and waiting in update/; skipping consolidation.")
         return 1
 
+    if missing:
+        print(f"\n⚠️  {len(missing)} source(s) didn't land: {', '.join(missing)}")
+        print("   Consolidating without them — consensus columns (avg_RK, sd_RK, avg_POS RANK) will")
+        print("   average the remaining sources only, so they are NOT comparable to a full board.")
+        print("   Re-fetch and re-run `ff-rankings --league-type redraft` once they're available.")
+
     print("\n🧮 Consolidating redraft rankings...")
     try:
-        processor = RankingsProcessor("redraft")
+        processor = RankingsProcessor("redraft", skip_sources=missing or None)
         output_file = processor.process_rankings(
             data_path=ns.data_path,
             base_data_dir=ns.base_data_dir,
             verbose=not ns.quiet,
         )
         print(f"\n✅ Combined rankings saved to: {output_file}")
-        return 1 if failed else 0
+        # Non-zero on a partial board too: it was built, but not from every source.
+        return 1 if (failed or missing) else 0
     except Exception as e:
         print(f"\n❌ Consolidation failed: {e}")
         return 1

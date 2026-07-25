@@ -765,9 +765,24 @@ players** (→ ~222 on the consolidated board); the analysis fallback is 36.
 redraft fetchers into `update/` (all six paywalled/consensus sources **plus Hayden Winks/Yahoo** — there is
 no longer any manual source), then runs the redraft consolidation (`RankingsProcessor`). Fetchers run
 **independently** — a failure (e.g. an expired session, or Yahoo throttling HW) is reported but doesn't stop
-the others, and consolidation still runs on whatever landed (`--strict` aborts instead; `--no-consolidate`
-fetches only). If the **HW fetch fails** no `hw-yahoo` file lands, so `refresh-all` skips consolidation with
-instructions (retry `ff-rankings fetch-hw`) rather than failing cryptically on the missing `hw` source.
+the others (`--strict` aborts instead; `--no-consolidate` fetches only).
+
+**A source that doesn't land is auto-skipped, not fatal.** Every source in `file_mapping` is required, so
+one missing file used to abort the entire consolidation — `refresh-all` would fetch six sources
+successfully and then die on `No file found for key 'fpts'`. It now works out which sources actually
+landed and passes the rest as `skip_sources`, printing a **loud warning** that consensus columns
+(`avg_RK`, `sd_RK`, `avg_POS RANK`) then average fewer sources and are **not comparable to a full board**.
+A partial board still exits **non-zero**.
+- **Keyed off the files on disk, not off which fetchers raised.** A fetcher can fail while a still-usable
+  file from an earlier run sits in `update/` — that file should be used, not skipped. Mirrors the
+  processor's own `startswith` matching so the two can't disagree.
+- **`fp` and `adp` are structural and still block.** They aren't one opinion among several: the board's
+  universe and every player's `PLAYER NAME`/`POS`/`TEAM` come from `fp`, and `_organize_final_dataframe`
+  drops rows on `ADP` (skipping `adp` raises `KeyError: ['ADP']`). Missing either produces *no* board, so
+  `refresh-all` skips consolidation with instructions rather than crashing.
+- HW is no longer special-cased — it's just another skippable expert source. Expect `fpts` to be the one
+  that trips this through the early preseason (Barrett publishes late; see `_assert_fpts_season`).
+
 Flags: `--data-path`, `--base-data-dir`, `--year`, `--no-consolidate`, `--strict`, `--quiet`.
 
 See `SCRAPER-PLAN.md` for the per-source automation roadmap and current status.
