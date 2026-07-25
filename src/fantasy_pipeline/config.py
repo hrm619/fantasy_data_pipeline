@@ -4,7 +4,46 @@ Configuration module for fantasy football data processing.
 Centralizes all column mappings, file lookups, and constants.
 """
 
+import os
+from pathlib import Path
 from typing import Optional
+
+PLAYER_KEY_FILENAME = "player_key_dict.json"
+
+
+def project_root() -> Path:
+    """Directory holding `player_key_dict.json` and `data/`.
+
+    The defaults below used to be CWD-relative strings, which meant the pipeline only worked
+    when invoked from the repo root. That is fine by hand but breaks every programmatic
+    caller: `fantasy-data ingest rankings` (run from the sibling repo) failed on
+    "Data directory not found", and any scheduler would hit the same wall.
+
+    Resolution order, first hit wins:
+      1. `FANTASY_PIPELINE_HOME` — explicit override.
+      2. The CWD, if it looks like the project. Preserves the historical behaviour exactly
+         for anyone already running from the repo root, including a checkout somewhere else.
+      3. The repo root inferred from this file (`src/fantasy_pipeline/config.py` -> up 2).
+         This is what makes an editable install work from any directory.
+      4. The CWD regardless — a non-editable install has no repo to find, so fall back to
+         what the code did before rather than inventing a path.
+    """
+    env_home = os.environ.get("FANTASY_PIPELINE_HOME")
+    if env_home:
+        return Path(env_home).expanduser()
+
+    cwd = Path.cwd()
+    if (cwd / PLAYER_KEY_FILENAME).exists():
+        return cwd
+
+    inferred = Path(__file__).resolve().parents[2]
+    if (inferred / PLAYER_KEY_FILENAME).exists():
+        return inferred
+
+    return cwd
+
+
+_ROOT = project_root()
 
 # Shared column layouts reused across weekly and ROS mappings (identical formats).
 # Defined once here to keep WEEKLY_COLUMN_MAPPINGS and ROS_COLUMN_MAPPINGS in sync.
@@ -248,14 +287,20 @@ FILE_MAPPINGS = {
 SUPPORTED_POSITIONS = ["QB", "RB", "WR", "TE"]
 
 # Default paths
+# Absolute, anchored to project_root() — see the note there. Resolved once at import, so a
+# caller that chdir()s mid-run still gets consistent paths.
+_RANKINGS_DIR = _ROOT / "data" / "rankings current"
 DEFAULT_PATHS = {
-    "data_dir": "data/rankings current/",
-    "update_dir": "data/rankings current/update/",
-    "latest_dir": "data/rankings current/latest/",
-    "agg_archive_dir": "data/rankings current/agg archive/",
-    "raw_archive_dir": "data/rankings current/raw archive/",
-    "player_key_file": "player_key_dict.json",
+    "data_dir": str(_RANKINGS_DIR),
+    "update_dir": str(_RANKINGS_DIR / "update"),
+    "latest_dir": str(_RANKINGS_DIR / "latest"),
+    "agg_archive_dir": str(_RANKINGS_DIR / "agg archive"),
+    "raw_archive_dir": str(_RANKINGS_DIR / "raw archive"),
+    "player_key_file": str(_ROOT / PLAYER_KEY_FILENAME),
 }
+
+# Raw PFR season exports + the derived combined/weekly CSVs that feed `ff-stats`.
+HISTORICAL_DATA_DIR = str(_ROOT / "data" / "fpts historical")
 
 # Standardized output columns for all processors
 STANDARD_OUTPUT_COLUMNS = {

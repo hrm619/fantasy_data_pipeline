@@ -18,6 +18,8 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from ..config import HISTORICAL_DATA_DIR
+
 # Column layout of PFR's fantasy season table, in order. The export has a TWO-row header (a
 # group row: Games/Passing/Rushing..., then the real one: Rk/Player/Tm/...), so the names are
 # imposed POSITIONALLY after dropping it — order matters far more than these labels.
@@ -61,7 +63,7 @@ PFR_SEASON_COLUMNS = [
 # Season files are named s<year>.xlsx (s2014.xlsx ... s2025.xlsx).
 SEASON_FILE_RE = re.compile(r"^s(\d{4})\.xlsx$", re.IGNORECASE)
 
-DEFAULT_INPUT_DIR = "data/fpts historical"
+DEFAULT_INPUT_DIR = HISTORICAL_DATA_DIR
 DEFAULT_OUTPUT_PATH = os.path.join(DEFAULT_INPUT_DIR, "combined_data.csv")
 
 

@@ -12,7 +12,7 @@ import os
 from typing import Dict, Optional
 from datetime import datetime
 
-from ..config import LAST_COMPLETED_SEASON
+from ..config import DEFAULT_PATHS, HISTORICAL_DATA_DIR, LAST_COMPLETED_SEASON, project_root
 from .season_stats_processor import calculate_season_stats
 from .weekly_stats_processor import calculate_weekly_trends
 
@@ -20,7 +20,7 @@ from .weekly_stats_processor import calculate_weekly_trends
 def aggregate_player_historical_stats(
     season_data_path: str,
     weekly_data_path: str,
-    player_key_path: str = "player_key_dict.json",
+    player_key_path: str = DEFAULT_PATHS["player_key_file"],
     season_filter: Optional[int] = LAST_COMPLETED_SEASON,
     output_dir: Optional[str] = None,
     outlier_method: str = "percentile",
@@ -837,8 +837,8 @@ def create_rankings_ready_dataset(
 def main():
     """Example usage of the player stats aggregation functions."""
     # Example paths - adjust as needed for your data
-    season_data_path = "data/fpts historical/combined_data.csv"
-    weekly_data_path = "data/fpts historical/weekly_data.csv"
+    season_data_path = os.path.join(HISTORICAL_DATA_DIR, "combined_data.csv")
+    weekly_data_path = os.path.join(HISTORICAL_DATA_DIR, "weekly_data.csv")
 
     print("🏈 Player Stats Aggregation Example")
     print("=" * 50)
@@ -849,7 +849,7 @@ def main():
             season_data_path=season_data_path,
             weekly_data_path=weekly_data_path,
             season_filter=LAST_COMPLETED_SEASON,
-            output_dir="data/historical_stats/",  # Save aggregated data
+            output_dir=os.path.join(str(project_root()), "data", "historical_stats"),  # Save aggregated data
             verbose=True,
         )
 
@@ -858,7 +858,7 @@ def main():
             aggregated_stats,
             current_season=str(LAST_COMPLETED_SEASON),
             min_games=10,
-            output_dir="data/rankings current/latest/",  # Save to rankings directory
+            output_dir=DEFAULT_PATHS["latest_dir"],  # Save to rankings directory
             verbose=True,
         )
 

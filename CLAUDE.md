@@ -25,6 +25,30 @@ This is a Python pipeline for processing fantasy football rankings from multiple
       └── raw archive/      # Archived input files
   ```
 
+### Path resolution — the pipeline runs from any directory
+
+`DEFAULT_PATHS` and `HISTORICAL_DATA_DIR` are **absolute**, anchored to `config.project_root()`.
+They used to be CWD-relative strings, which meant the pipeline only worked when invoked from the
+repo root — fine by hand, fatal for any programmatic caller. `fantasy-data ingest rankings` runs
+from the sibling repo and died on `Data directory not found: data/rankings current/update/`, then
+on `Player key dictionary not found`, and a scheduler would hit the same wall.
+
+`project_root()` resolves, first hit wins:
+1. **`FANTASY_PIPELINE_HOME`** — explicit override.
+2. **The CWD**, if it contains `player_key_dict.json`. Preserves the old behaviour exactly for
+   anyone already running from a checkout — including a *different* checkout than the installed
+   package, which is why this outranks the inferred root.
+3. **The repo root inferred from `config.py`** (`src/fantasy_pipeline/` → up 2). This is what makes
+   an editable install work from anywhere.
+4. **The CWD regardless** — a non-editable install has no repo to find, so fall back to the old
+   behaviour rather than inventing a path.
+
+Resolved **once at import**, so a caller that `chdir()`s mid-run still gets consistent paths.
+
+`load_player_key_mapping` writes its reverse map beside **the key file it was derived from**, not
+relative to the CWD — otherwise running from elsewhere scattered a stray `data/` directory wherever
+the process happened to start. For a repo-root key file this is the same location as before.
+
 ## Quick Start
 
 ```bash

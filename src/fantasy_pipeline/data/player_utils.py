@@ -133,9 +133,13 @@ def load_player_key_mapping(
         else:
             player_name_to_key[value] = key
 
-    # Optionally save reverse mapping for debugging/reference
+    # Optionally save reverse mapping for debugging/reference. Written beside the key file it
+    # was derived from, NOT relative to the CWD: run from anywhere else and the old behaviour
+    # scattered a stray `data/` directory wherever the process happened to start. For a repo-
+    # root key file this resolves to exactly the same place as before.
     if save_reverse_mapping:
-        reverse_mapping_path = os.path.join("data", "player_name_to_key.json")
+        key_dir = os.path.dirname(os.path.abspath(player_key_path))
+        reverse_mapping_path = os.path.join(key_dir, "data", "player_name_to_key.json")
         os.makedirs(os.path.dirname(reverse_mapping_path), exist_ok=True)
         with open(reverse_mapping_path, "w") as f:
             json.dump(player_name_to_key, f, indent=4, sort_keys=True)

@@ -17,11 +17,12 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from ..config import DEFAULT_PATHS, HISTORICAL_DATA_DIR, project_root
 from ..core.stats_aggregator import _dedupe_season_rows
 from ..data.player_utils import add_player_ids, clean_player_names, load_player_key_mapping
 
-HISTORICAL_DIR = "data/rankings_historical"
-COMBINED_DATA_PATH = "data/fpts historical/combined_data.csv"
+HISTORICAL_DIR = os.path.join(str(project_root()), "data", "rankings_historical")
+COMBINED_DATA_PATH = os.path.join(HISTORICAL_DATA_DIR, "combined_data.csv")
 HOME_DB_PATH = Path.home() / ".fantasy-data" / "fantasy_data.db"
 
 # Positions the board carries. FB and anything else is dropped from the analysis universe.
@@ -219,7 +220,7 @@ def _derive_pos_ranks(out: pd.DataFrame) -> pd.DataFrame:
 
 def build_expert_rankings(
     historical_dir: str = HISTORICAL_DIR,
-    player_key_path: str = "player_key_dict.json",
+    player_key_path: str = DEFAULT_PATHS["player_key_file"],
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Read both snapshot files and return the tidy expert-ranking fact table."""
