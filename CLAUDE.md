@@ -398,7 +398,16 @@ source is unavailable or its data is untrustworthy; prefer it over shipping bad 
 - **hw-data**: Manual download from Underdog Network (tableDownload.csv export) - provides HPPR, EXP, DIFF fields
 - **fpts-data**: Performance metrics from Fantasy Points (fpts-xfp-avg.csv)
 
-**Underdog reshuffled the redraft `tableDownload` export for 2026** (`COLUMN_MAPPINGS['hw']`, 10 → 11 cols):
+**Hayden Winks redraft moved from Underdog to Yahoo Sports for 2026** — it is now **automated**
+(`scraper/fetch_yahoo_hw.py`, `ff-rankings fetch-hw`, file prefix `hw-yahoo`), replacing the old manual
+`tableDownload.csv`. Winks publishes the board as a series of Yahoo articles, each a 12-player rank range
+("... ranked 1-12 in Half-PPR", "13-24", ...), released incrementally through the preseason; the fetcher
+crawls his author page, parses every published part, and assembles one contiguous board. It writes the same
+11-col positional `COLUMN_MAPPINGS['hw']` schema the Underdog export did (5 real cols + 6 blank), so no config
+mapping changed. See "### Hayden Winks redraft (Yahoo)" below. **Weekly/ROS HW is still on Underdog**
+(`hw_scraper.py`) and must move to Yahoo once in-season articles start — no weekly Yahoo pattern exists yet.
+
+The Underdog `tableDownload` export it replaced (kept for reference — the schema lives on):
 
 | | Columns |
 |---|---|
@@ -650,7 +659,8 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
 
 ### Saved-session auth for account-gated sources (`scraper/auth.py`)
 
-**Five of the six draft fetchers now need an account** — only `fp` (expert consensus rankings) is open.
+**Five of the seven draft fetchers need an account** — only `fp` (expert consensus rankings) and `hw`
+(Hayden Winks on Yahoo) are open.
 (`adp` is DraftSharks' Sleeper board now, so it rides the `ds` account rather than the FantasyPros one.)
 `SOURCE_LOGIN_URLS` is the single registry; all use a **saved-session** strategy — no passwords in code or env:
 - **`ff-rankings login <source>`** (`{fp, ds, pff, fpts, jj}`) opens a **headed** browser for a one-time manual
@@ -690,16 +700,74 @@ timeout), so probe the live DOM for locks/fences/redirects first.
 - The `login` prompt nudges you to tick "Remember me" for longer-lived cookies. For guaranteed weeks-long
   sessions independent of site behavior, a persistent browser profile (user-data-dir) is the next lever.
 
+### Hayden Winks redraft (Yahoo — `scraper/fetch_yahoo_hw.py`)
+
+The redraft `hw` source (was manual Underdog `tableDownload.csv`). **CLI: `ff-rankings fetch-hw [--output DIR]
+[--season N] [--min-players N] [--analysis-only]`** → `hw-yahoo-<season>.csv` (the 11-col positional
+`COLUMN_MAPPINGS['hw']` schema). No account needed. Winks publishes in **two** forms and the fetcher prefers
+the deep one:
+
+- **Full board (primary — `fetch_yahoo_hw_top300`).** A single *"top-N overall"* article (grows top-250 →
+  top-300+ over the preseason) rendered as **one client-side `<table>`** — **~250 skill players today**. The
+  table isn't in the server HTML, so it's **headless-rendered with Playwright** (the optional `headless`
+  extra, shared with ds/pff/fpts; lazy-imported with an install hint). `parse_top300_table` reads each row
+  (`# → overall_rank`, "Name / TEAM - POS"), **drops K/DST** (pipeline carries only QB/RB/WR/TE), and
+  **computes POS RANK** within position from overall order (the table has no POS-RANK column). Overall ranks
+  keep Winks' true placement, so removing K/DST leaves **gaps** — the full-board path validates
+  strictly-increasing/unique, not contiguous.
+- **Analysis articles (fallback — `fetch_yahoo_hw_analysis`).** The 12-at-a-time *"ranked N-M"* prose
+  articles (**36 today**, drip-published). Used automatically when the full board is unavailable (Playwright
+  missing, article unpublished, render failure), or forced with `--analysis-only` (no browser). Everything
+  below (999/consent/cache/discovery/parse) describes this path.
+- `fetch_yahoo_hw` orchestrates: try the full board, fall back to analysis. Both end at the same
+  `_write_hw_csv` (reconcile names → positional CSV).
+
+- **Access.** Yahoo returns **HTTP 999** to default library UAs — a realistic desktop Chrome UA is sent and
+  999 is retried with backoff. Consent-redirect query params (`guccounter`/`guce_*`) are stripped; a redirect
+  to **`guce.yahoo.com`** (the consent gate) raises `ConsentGateError` rather than parsing the interstitial.
+  Raw HTML is disk-cached by article id; requests are rate-limited (1/3s).
+- **Discovery.** Crawls `sports.yahoo.com/author/hayden-winks/`, matching the rank-range slug against hrefs
+  (unpublished future parts appear only as **unlinked plain text** and are ignored). Falls back to
+  `YAHOO_HW_KNOWN_ARTICLES[season]` if the crawl is empty. Coverage grows through the preseason; a partial
+  board (only the published parts) is fine — the board is driven by `fp`, so players HW hasn't ranked yet
+  simply lack `hw_RK`.
+- **Parsing (`parse_article`, pure/testable).** Each player entry is its **own single-item `<ol>`** (so every
+  marker renders "1"), and **part 1 has no `<ol>` at all** — never derive rank from list markup.
+  `overall_rank = rank_range_start + document-order index`, and the entry count is **asserted** to equal the
+  range span (a truncated/expanded article fails loudly). The header `<strong>` matches
+  `Name, POS<rank>, Team`; part 1 prefixes an overall rank (`1. Jahmyr Gibbs, RB1, Lions`) that's stripped.
+  The name is usually in an `<a href="/nfl/players/ID/">` but is bare text when Winks name-dropped the player
+  earlier (Yahoo links only the first mention) — so `yahoo_player_id` is nullable (often >50% null in the
+  top-36). Ads ("Advertisement" nodes) and `<figcaption>` captions are kept out of `analysis_text`.
+- **Name reconciliation.** Yahoo writes proper punctuation (`Amon-Ra St. Brown`, `A.J. Brown`, `De'Von
+  Achane`) while `player_key_dict.json` carries the old Underdog-era stripped spellings (`AmonRa St Brown`,
+  `AJ Brown`, `DeVon Achane`). Since redraft matches HW by **exact** name (`add_player_ids`), that drift would
+  silently cost those stars their `hw_RK`. `reconcile_player_names` rewrites each name to the dict's canonical
+  spelling **when they normalize equal**, using normalized-exact match only (no fuzzy) and **refusing
+  ambiguous normalized forms** (real homonyms) — so it never guesses one player into another's identity. A
+  name PFR/the dict doesn't know (rookies) is left as-is for a later player-key update, not forced.
+- **Validation.** Contiguous overall ranks across the union of parts (a gap = a missing middle part → hard
+  fail), positions ∈ {QB,RB,WR,TE}, coverage floor (`min_players`, default 12 = one part), null-id warnings.
+
+Tested fixture-first: `tests/test_fetch_yahoo_hw.py` runs against saved HTML in `tests/fixtures/yahoo_hw/`
+(no network) — the analysis parse/discovery/adapter/reconciliation, the **full-board table parse**
+(`top300-table-2026.html` → 250 skill players, K/DST dropped, POS RANK computed) + its discovery + the
+strictly-increasing validation, the HTTP guards (999/consent/cache), an analysis `fetch_yahoo_hw(...,
+full_board=False)` run via a fake session, and a capability-parity check that emitted names resolve against
+the real `player_key_dict.json`. The full-board *render* (Playwright) is exercised by the live `fetch-hw`,
+not in unit tests (the saved rendered-table fixture covers the parser). **A live `fetch-hw` today pulls ~250
+players** (→ ~222 on the consolidated board); the analysis fallback is 36.
+
 ### End-to-end refresh (`ff-rankings refresh-all`)
 
-`_refresh_all_command` (in `cli/rankings.py`) is the one-command convenience wrapper: it runs all six
-redraft fetchers into `update/`, then runs the redraft consolidation (`RankingsProcessor`). Fetchers run
-**independently** — a failure (e.g. an expired session) is reported but doesn't stop the others,
-and consolidation still runs on whatever landed (`--strict` aborts instead; `--no-consolidate` fetches only).
-**Caveat:** redraft consolidation also requires Hayden Winks (`tableDownload.csv`), which has **no fetcher**
-(no stable redraft URL) and must be downloaded manually into `update/`; `refresh-all` checks for it up front
-and, if absent, fetches the six sources and skips consolidation with instructions rather than failing
-cryptically. Flags: `--data-path`, `--base-data-dir`, `--year`, `--no-consolidate`, `--strict`, `--quiet`.
+`_refresh_all_command` (in `cli/rankings.py`) is the one-command convenience wrapper: it runs all **seven**
+redraft fetchers into `update/` (all six paywalled/consensus sources **plus Hayden Winks/Yahoo** — there is
+no longer any manual source), then runs the redraft consolidation (`RankingsProcessor`). Fetchers run
+**independently** — a failure (e.g. an expired session, or Yahoo throttling HW) is reported but doesn't stop
+the others, and consolidation still runs on whatever landed (`--strict` aborts instead; `--no-consolidate`
+fetches only). If the **HW fetch fails** no `hw-yahoo` file lands, so `refresh-all` skips consolidation with
+instructions (retry `ff-rankings fetch-hw`) rather than failing cryptically on the missing `hw` source.
+Flags: `--data-path`, `--base-data-dir`, `--year`, `--no-consolidate`, `--strict`, `--quiet`.
 
 See `SCRAPER-PLAN.md` for the per-source automation roadmap and current status.
 

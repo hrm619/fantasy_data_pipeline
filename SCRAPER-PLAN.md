@@ -37,21 +37,21 @@ Prefix of the filename must match `FILE_MAPPINGS[<league>][<key>]`.
 ---
 
 ## Priority order / status
-1. ✅ FantasyPros ADP (`adp`) — consensus shipped (`ff-rankings fetch-adp`); Sleeper option deferred
+1. ✅ ADP (`adp`) — DraftSharks' Sleeper 12-team half-PPR board (`ff-rankings fetch-adp`); rides the `ds` session
 2. ✅ DraftShark (`ds`) — headless Playwright fetcher shipped (`ff-rankings fetch-ds`); reclassified sharp in fantasy-data
-3. ✅ Hayden Winks (`hw`) — weekly/ROS automated + hardened (season param, fail-loud guard); redraft manual by design
+3. ✅ Hayden Winks (`hw`) — weekly/ROS automated + hardened (season param, fail-loud guard); redraft automated on Yahoo (`ff-rankings fetch-hw`)
 4. ✅ FantasyPros rankings (`fp`) — shipped via embedded `ecrData` JSON (`ff-rankings fetch-fp`); works year-round
 5. ✅ FantasyPoints / Barrett (`fpts`) — saved-session export shipped (`ff-rankings fetch-fpts`); live-verified 99 players
 6. ✅ PFF (`pff`) — saved-session headless export shipped (`ff-rankings fetch-pff`); live-verified 512 players
 7. ✅ JJ Zachariason (`jj`) — saved-session Patreon API + auto-discovery (`ff-rankings fetch-jj`); live-verified 250 players
 
 **🎉 ALL SEVEN SOURCES ARE AUTOMATED.** Each `update/` source now refreshes with one command
-(`fetch-adp`, `fetch-fp`, `fetch-ds`, weekly/ROS HW auto-scrape, `fetch-fpts`, `fetch-pff`, `fetch-jj`),
-with paywalled sources behind a one-time `ff-rankings login <source>`. The **`ff-rankings refresh-all`**
-wrapper runs all six redraft fetchers + the consolidation in one pass (live-verified end-to-end: 6/6 sources
-→ 306-player combined file). **Caveat:** redraft also needs the manual Hayden Winks `tableDownload.csv`
-(no fetcher — no stable redraft URL); `refresh-all` checks for it and skips consolidation with instructions
-if absent. Remaining items are cross-cutting (doc reconciliation — largely done) and the known loader bug below.
+(`fetch-adp`, `fetch-fp`, `fetch-ds`, `fetch-hw`, `fetch-fpts`, `fetch-pff`, `fetch-jj`; weekly/ROS HW
+auto-scrapes), with paywalled sources behind a one-time `ff-rankings login <source>`. The
+**`ff-rankings refresh-all`** wrapper runs all seven redraft fetchers + the consolidation in one pass —
+**there is no longer any manual source**. If the HW fetch fails no `hw-yahoo` file lands, so `refresh-all`
+skips consolidation with instructions rather than failing on the missing source. Remaining items are
+cross-cutting (doc reconciliation — largely done) and the known loader bug below.
 
 ---
 

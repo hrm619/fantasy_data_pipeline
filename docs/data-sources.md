@@ -27,22 +27,23 @@ fetch sources  →  data/rankings current/update/  →  ff-rankings --league-typ
 | PFF | `pff` | ✅ Yes (saved session) | `ff-rankings fetch-pff` | login | `Draft-rankings-export-<season>.csv` |
 | FantasyPoints / Barrett | `fpts` | ✅ Yes (saved session) | `ff-rankings fetch-fpts` | login | `Scott Barrett <season> Redraft Rankings.csv` |
 | JJ Zachariason | `jj` | ✅ Yes (Patreon API) | `ff-rankings fetch-jj` | login | `Redraft1QB_<season>.csv` |
-| Hayden Winks | `hw` | ⚠️ Manual (redraft) | — | none | `tableDownload.csv` |
+| Hayden Winks | `hw` | ✅ Yes (Yahoo) | `ff-rankings fetch-hw` | none | `hw-yahoo-<season>.csv` |
 
-**Redraft consolidation requires all seven sources.** Six are automated; **Hayden Winks
-redraft is manual** — it has no stable Underdog URL, so download it from Underdog Network
-("Table Download" → `tableDownload.csv`) into `update/` yourself. (For **weekly/ROS**, HW is
-auto-scraped by the pipeline at run time — see [usage](usage.md).)
+**Redraft consolidation requires all seven sources — and all seven are now automated.** Hayden
+Winks moved his redraft rankings from Underdog to Yahoo Sports for 2026, so `fetch-hw` crawls his
+Yahoo author page and assembles the board from the published 12-player rank-range articles (no
+account, no manual download). (For **weekly/ROS**, HW is still auto-scraped from Underdog at run
+time — see [usage](usage.md).)
 
 ## Quick start
 
 ```bash
-# One command: fetch all six automated sources, then consolidate.
+# One command: fetch all seven automated sources, then consolidate.
 # --auto-login pops a login window only if a paywalled session has expired.
 ff-rankings refresh-all --auto-login
 ```
-Keep the manual `tableDownload.csv` (Hayden Winks) in `update/`; if it's absent, `refresh-all`
-fetches the six and skips consolidation with instructions.
+If the HW fetch fails (e.g. Yahoo throttling), no `hw-yahoo` file lands and `refresh-all` skips
+consolidation with instructions to retry `ff-rankings fetch-hw`.
 
 ## Per-source detail
 
@@ -107,10 +108,17 @@ team, so it collides with that team's `DEF` row (`Detroit Lions` is both TQB @14
 - **Schema (6):** `RK, PLAYER NAME, POS, POS RANK, TIER, AUCTION`. The current source dropped the
   Auction column, so the fetcher pads it back to 6.
 
-### Hayden Winks (`hw`) — manual for redraft, automated for weekly/ROS
-- **Redraft:** no stable URL → download `tableDownload.csv` from Underdog Network manually.
-- **Weekly/ROS:** auto-scraped from the Underdog "Blueprint" article at pipeline run time
-  (`scraper/hw_scraper.py`); no manual step.
+### Hayden Winks (`hw`) — automated (Yahoo for redraft, Underdog for weekly/ROS)
+- **Redraft:** `ff-rankings fetch-hw` → `hw-yahoo-<season>.csv` (`scraper/fetch_yahoo_hw.py`). Winks
+  moved to Yahoo Sports for 2026. The fetcher prefers his **full "top-N overall" board** — one
+  client-rendered table (**~250 skill players**, K/DST dropped), headless-rendered with Playwright (the
+  `headless` extra). If that's unavailable it **falls back** to his 12-at-a-time "ranked N-M" analysis
+  articles (36 today; force with `--analysis-only`, no browser). No account, no manual step. Yahoo 999s
+  default UAs and has a consent gate, both handled; POS RANK is computed from overall order; names are
+  reconciled to the player-key spelling.
+- **Weekly/ROS:** still auto-scraped from the Underdog "Blueprint" article at pipeline run time
+  (`scraper/hw_scraper.py`). **TODO:** retarget to Yahoo once in-season weekly articles start — no weekly
+  Yahoo pattern exists yet.
 
 ## Saved-session auth (account-gated sources)
 

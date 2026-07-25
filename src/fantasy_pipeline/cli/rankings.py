@@ -99,6 +99,44 @@ def _fetch_adp_command(argv) -> int:
         return 1
 
 
+def _fetch_hw_command(argv) -> int:
+    """Fetch Hayden Winks redraft rankings from Yahoo into the update folder (`ff-rankings fetch-hw`)."""
+    from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
+    from fantasy_pipeline.scraper.fetch_yahoo_hw import fetch_yahoo_hw
+
+    parser = argparse.ArgumentParser(
+        prog="ff-rankings fetch-hw",
+        description="Fetch Hayden Winks' redraft rankings (Yahoo Sports) into the update folder",
+    )
+    parser.add_argument(
+        "--output",
+        default=DEFAULT_PATHS["update_dir"],
+        help="Directory to save the HW CSV (default: the pipeline update folder)",
+    )
+    parser.add_argument("--season", type=int, default=CURRENT_SEASON, help="NFL season to fetch")
+    parser.add_argument(
+        "--min-players",
+        type=int,
+        default=12,
+        help="Coverage floor for the analysis fallback (the full board has its own 150 floor)",
+    )
+    parser.add_argument(
+        "--analysis-only",
+        action="store_true",
+        help="Skip the full-board table (no browser) and assemble only the 12-at-a-time analysis articles",
+    )
+    ns = parser.parse_args(argv)
+
+    try:
+        os.makedirs(ns.output, exist_ok=True)
+        path = fetch_yahoo_hw(ns.output, season=ns.season, min_players=ns.min_players, full_board=not ns.analysis_only)
+        print(f"\n✅ Hayden Winks rankings saved to: {path}")
+        return 0
+    except Exception as e:
+        print(f"\n❌ Error fetching Hayden Winks rankings: {e}")
+        return 1
+
+
 def _fetch_ds_command(argv) -> int:
     """Fetch DraftSharks half-PPR rankings into the update folder (`ff-rankings fetch-ds`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS
@@ -226,9 +264,8 @@ def _refresh_all_command(argv) -> int:
     run independently: a failure (e.g. an expired paywalled session) is reported but does not
     stop the others, and consolidation still runs on whatever landed (use --strict to abort).
 
-    Note: redraft consolidation also requires Hayden Winks (tableDownload.csv), which has no
-    automated fetcher (no stable URL) and must be downloaded manually into update/. If it's
-    absent, the fetch still runs and consolidation is skipped with instructions.
+    All seven redraft sources — including Hayden Winks (Yahoo) — now have fetchers, so the full
+    board can refresh with no manual downloads.
     """
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
     from fantasy_pipeline import RankingsProcessor
@@ -240,6 +277,7 @@ def _refresh_all_command(argv) -> int:
         fetch_fpts,
         fetch_jj,
     )
+    from fantasy_pipeline.scraper.fetch_yahoo_hw import fetch_yahoo_hw
 
     parser = argparse.ArgumentParser(
         prog="ff-rankings refresh-all",
@@ -272,6 +310,7 @@ def _refresh_all_command(argv) -> int:
     # fetchers; weekly/ROS HW is auto-scraped by the pipeline itself.
     # Note 'adp' and 'ds' hit the same site and share the 'ds' session: ADP is DraftSharks'
     # Sleeper board, gated behind the same login as the DraftSharks rankings export.
+    # 'hw' (Yahoo) needs no account; --year selects the season for its article discovery.
     fetchers = [
         ("adp  (DraftSharks Sleeper ADP)", "ds", lambda: fetch_draftsharks_adp(update_dir, year=ns.year)),
         ("fp   (FantasyPros rankings)", None, lambda: fetch_fantasypros_rankings(update_dir, year=ns.year)),
@@ -279,6 +318,7 @@ def _refresh_all_command(argv) -> int:
         ("pff  (PFF)", "pff", lambda: fetch_pff(update_dir, year=ns.year)),
         ("fpts (FantasyPoints/Barrett)", "fpts", lambda: fetch_fpts(update_dir, year=ns.year)),
         ("jj   (JJ Zachariason)", "jj", lambda: fetch_jj(update_dir, year=ns.year)),
+        ("hw   (Hayden Winks/Yahoo)", None, lambda: fetch_yahoo_hw(update_dir, season=ns.year)),
     ]
 
     print(f"🔄 Refreshing {len(fetchers)} redraft sources into: {update_dir}\n")
@@ -320,16 +360,16 @@ def _refresh_all_command(argv) -> int:
         print("\n⛔ --strict set and some fetchers failed; not consolidating.")
         return 1
 
-    # Redraft consolidation also needs Hayden Winks (tableDownload.csv), which has no
-    # automated fetcher (no stable redraft URL) and must be downloaded manually. Check it
-    # up front so we fail helpfully instead of with a cryptic "No file found for key 'hw'".
-    if not any(f.startswith("tableDownload") for f in os.listdir(update_dir)):
-        print("\n⚠️  Can't consolidate yet — redraft requires a manual source with no fetcher:")
-        print("     - hw (Hayden Winks) → tableDownload.csv")
-        print("   It has no automated fetcher (no stable Underdog URL). Download it from")
-        print("   Underdog ('Table Download') as tableDownload.csv into update/, then run:")
-        print("     ff-rankings --league-type redraft")
-        print("\n⏭  The 6 automated sources are fetched and waiting in update/; skipping consolidation.")
+    # Redraft consolidation needs a Hayden Winks board. It's now fetched above (Yahoo), but if
+    # that fetch failed (e.g. Yahoo throttling) there's no hw-yahoo file — check so we fail
+    # helpfully instead of with a cryptic "No file found for key 'hw'".
+    if not any(f.startswith("hw-yahoo") for f in os.listdir(update_dir)):
+        print("\n⚠️  Can't consolidate yet — the Hayden Winks (hw) source didn't land:")
+        print("     - hw (Hayden Winks) → hw-yahoo-<season>.csv")
+        print("   Its fetch above failed (see the ❌ line). Retry it on its own with:")
+        print("     ff-rankings fetch-hw")
+        print("   then consolidate: ff-rankings --league-type redraft")
+        print("\n⏭  The other sources are fetched and waiting in update/; skipping consolidation.")
         return 1
 
     print("\n🧮 Consolidating redraft rankings...")
@@ -463,6 +503,9 @@ def main(args=None):
         # Additive subcommand: `ff-rankings fetch-adp ...` (default flow is unchanged)
         if argv and argv[0] == "fetch-adp":
             return _fetch_adp_command(argv[1:])
+        # Additive subcommand: `ff-rankings fetch-hw ...` (Hayden Winks redraft, Yahoo Sports)
+        if argv and argv[0] == "fetch-hw":
+            return _fetch_hw_command(argv[1:])
         # Additive subcommand: `ff-rankings fetch-ds ...` (DraftSharks headless fetch)
         if argv and argv[0] == "fetch-ds":
             return _fetch_ds_command(argv[1:])

@@ -63,7 +63,10 @@ COLUMN_MAPPINGS = {
         "CEILING PROJ",
         "3D VALUE",
     ],
-    # Hayden Winks data (Underdog "Table Download" export).
+    # Hayden Winks redraft data. As of 2026 this is fed by the Yahoo fetcher
+    # (scraper/fetch_yahoo_hw.py, file prefix `hw-yahoo`), which writes this exact 11-col
+    # positional schema — real values in PLAYER NAME/TEAM/POS/POS RANK/RK, the other six blank.
+    # The schema is retained from the old Underdog "Table Download" export it replaced.
     # Underdog reshuffled this export for 2026: the column order changed, `Diff`/`Notes` were
     # dropped, `Finish2024` became two stat columns, and two id columns were added (10 -> 11 cols).
     # These names are positional labels, not source headers — only PLAYER NAME/TEAM/POS/POS RANK/RK
@@ -198,7 +201,10 @@ FILE_MAPPINGS = {
         "fp": f"FantasyPros_{CURRENT_SEASON}_Draft_ALL_Rankings",
         "jj": "Redraft1QB_",
         "ds": "rankings-half-ppr",
-        "hw": "tableDownload",
+        # Hayden Winks moved his redraft rankings from Underdog to Yahoo for 2026; the
+        # `hw-yahoo-<season>.csv` fetcher (scraper/fetch_yahoo_hw.py) writes the same 11-col
+        # positional COLUMN_MAPPINGS['hw'] schema the old manual `tableDownload.csv` did.
+        "hw": "hw-yahoo",
         "pff": "Draft-rankings-export",
         "adp": f"DraftSharks_{CURRENT_SEASON}_Sleeper_ADP",
     },
@@ -207,7 +213,7 @@ FILE_MAPPINGS = {
         "fp": f"FantasyPros_{CURRENT_SEASON}_Draft_ALL_Rankings",
         "jj": "1QBRankings_",
         "ds": "rankings-half-ppr",
-        "hw": "tableDownload",
+        "hw": "hw-yahoo",  # Yahoo HW redraft fetcher (see redraft note above)
         "pff": "Draft-rankings-export",
         "adp": "adp-rankings",
     },
