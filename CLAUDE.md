@@ -323,22 +323,46 @@ checks cry wolf. Validate against **ground truth** instead: PFR's own `ID` colum
 
 ### Consensus columns exclude market + derived data
 
-`avg_RK`, `sd_RK`, and `avg_POS RANK` average **expert sources only**. `_is_derived_or_market_col`
-(`core/rankings_processor.py`) excludes the `adp_` / `avg_` / `sd_` prefixes:
+`avg_RK`, `sd_RK`, and `avg_POS RANK` average the **sharp expert sources only** — `jj`, `ds`, `hw`,
+`pff`, `fpts`. `_is_derived_or_market_col` (`core/rankings_processor.py`) excludes the `adp_` / `fp_` /
+`avg_` / `sd_` prefixes:
 
 - **`adp_` is market data, not an expert ranking.** `ADP Delta = ADP - avg_RK`, so letting ADP into
   `avg_RK` puts it on *both sides* — biasing every delta toward zero. Including it narrowed the
   `ADP Delta` spread ~27% (std 54.0 → 39.4), attenuating the exact divergence signal the board exists
   to measure. Same reasoning for `sd_RK` (dispersion across a set containing the market it's compared
   to) and `avg_POS RANK` vs `adp_POS RANK`.
-- `adp_RK` / `adp_POS RANK` are still **emitted** as columns — the exclusion is from the *math*, not
-  the board. `rk_columns` in `_organize_final_dataframe` intentionally still includes them (it drives
-  column order).
+- **`fp_` is a consensus of consensuses.** FantasyPros' ECR is itself an average of ~100 experts, so
+  averaging it alongside the individual sharp sources double-counts the industry view and dilutes the
+  divergence the board exists to measure. It is **displayed** (`fp_RK`, `fp_POS RANK`) but kept out of
+  the math — deliberately distinct from the sharp sources.
+  - Careful with the prefix: **`fpts_` is Scott Barrett, a sharp source, and does NOT match `fp_`**
+    (`"fpts_RK".startswith("fp_")` is `False`). `test_fpts_is_still_a_consensus_source` pins this.
+  - This exclusion used to happen *by accident*. fp's rank column was named `ECR` and emitted
+    **unprefixed**, so `avg_RK`'s `"_RK" in col` filter never matched it: fp seeded the board's whole
+    universe while silently contributing nothing. `COLUMN_MAPPINGS['fp']` now names column 0 `RK`
+    (as weekly/ros already did) so fp flows the normal path, and the exclusion is explicit.
+- `adp_POS RANK` is still **emitted** — the exclusion is from the *math*, not the board.
+
+### Columns kept off the output table
+
+`_is_excluded_output_col` drops these in `_organize_final_dataframe`, **before** the ordering logic:
+uncategorised columns fall through to `other_columns`, so anything dropped later would silently
+reappear at the end of the table instead of vanishing.
+
+| Dropped | Why |
+|---|---|
+| `*_TIER` | Each source bins tiers differently, so they don't compare across sources. |
+| anything with `ECR` | Incl. `ECR Delta` / `ECR ADP Delta` / `POS ECR`. fp's rank now rides as `fp_RK`. |
+| `adp_RK` | The market's rank is already carried by `ADP`, `POS ADP` and `ADP ROUND`. |
+
+`adp_POS RANK` is deliberately **kept** for positional context. The redraft board is 31 columns.
 
 ### Output numeric formatting
 
 `_format_numeric_columns` runs at the end of `_organize_final_dataframe`:
-- **Ints** (nullable `Int64`): `*_RK`, `*_TIER`, `*POS RANK*`, `ADP ROUND`, `POS ADP`, `ECR`, `POS ECR`.
+- **Ints** (nullable `Int64`): `*_RK`, `*POS RANK*`, `ADP ROUND`, `POS ADP` (the `*_TIER` / `ECR` rules
+  are retained but match nothing on the board now — those columns are dropped, see above).
   They're conceptually integers but arrive as `float64` because a source that omits a player leaves NaN.
   `Int64` keeps them integral while holding the gaps (written to CSV as `1`, blank for missing).
 - **Floats, 1dp**: everything else numeric — `avg_RK`, `sd_RK`, the deltas, `ADP`, `HIST_*`. Drops
@@ -424,7 +448,7 @@ here is quiet — `rankings_processor.py` logs a warning and `continue`s past st
 
 ### Column Naming Conventions
 - Source prefixes: `fpts_`, `fp_`, `jj_`, `hw_`, `ds_`, `pff_`
-- Rankings: `RK`, `POS RANK`, `ECR`, `POS ECR`
+- Rankings: `RK`, `POS RANK` (fp's ECR rides as `fp_RK`; `ECR`/`POS ECR` are off the board)
 - Averages: `avg_RK`, `avg_POS RANK`
 - Deltas: `ADP Delta`, `ECR Delta`, `ECR ADP Delta`
 - Historical: `HIST_` prefix for all historical stat columns

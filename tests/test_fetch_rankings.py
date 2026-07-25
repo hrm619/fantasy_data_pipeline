@@ -198,7 +198,9 @@ class TestParseFantasyProsRankings:
 
     def test_maps_ecr_tier_name_team_pos_bye(self):
         chase = _parse_fantasypros_rankings(FP_HTML)[0]
-        assert chase["ECR"] == 1
+        # Still FantasyPros' `rank_ecr`; labelled RK because the pipeline consumes it as this
+        # source's rank (fp lands on the board as fp_RK, outside the consensus average).
+        assert chase["RK"] == 1
         assert chase["TIER"] == 1
         assert chase["PLAYER NAME"] == "Ja'Marr Chase"
         assert chase["TEAM"] == "CIN"

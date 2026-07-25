@@ -42,8 +42,14 @@ _FPTS_DATA_COLUMNS = [
 COLUMN_MAPPINGS = {
     # FPTS data (Scott Barrett)
     "fpts": ["RK", "PLAYER NAME", "POS", "TEAM", "BYE", "TIER", "EXODIA"],
-    # FantasyPros data
-    "fp": ["ECR", "TIER", "PLAYER NAME", "TEAM", "POS", "BYE", "SOS", "ECR VS ADP"],
+    # FantasyPros data. Column 0 is FantasyPros' expert consensus rank; it is named RK (not
+    # ECR) so fp flows through the normal source path and lands on the board as fp_RK /
+    # fp_POS RANK like every other source. Named ECR it was emitted UNPREFIXED, which meant
+    # avg_RK's `"_RK" in col` filter never matched it — fp seeded the board's entire universe
+    # while contributing nothing to the consensus. It is now excluded deliberately instead,
+    # by _NON_CONSENSUS_PREFIXES, because ECR is itself an average of experts (weekly/ros
+    # already mapped this column to RK).
+    "fp": ["RK", "TIER", "PLAYER NAME", "TEAM", "POS", "BYE", "SOS", "ECR VS ADP"],
     # JJ Zachariason data
     "jj": ["RK", "PLAYER NAME", "POS", "POS RANK", "TIER", "AUCTION"],
     # DraftShark rankings
@@ -255,7 +261,7 @@ DEFAULT_PATHS = {
 STANDARD_OUTPUT_COLUMNS = {
     "base": ["PLAYER NAME", "PLAYER ID", "POS", "TEAM"],
     "ranking": ["RK", "POS RANK"],
-    "optional": ["TIER", "ADP", "ECR", "POS ECR", "ADP ROUND"],
+    "optional": ["TIER", "ADP", "ECR", "POS ECR", "ADP ROUND"],  # TIER/ECR are filtered from the board
 }
 
 # Weekly-specific output columns (excludes ADP and overall RK)

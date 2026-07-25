@@ -42,7 +42,10 @@ def _extract_fp_report_config(html: str) -> dict:
 # Column layout the pipeline's 'fp' source expects (must equal COLUMN_MAPPINGS['fp']).
 # SOS / ECR VS ADP are discarded by the processor after the positional rename, so they
 # are emitted blank. POS holds the bare position (the pipeline strips any rank digits).
-FP_OUTPUT_COLUMNS = ["ECR", "TIER", "PLAYER NAME", "TEAM", "POS", "BYE", "SOS", "ECR VS ADP"]
+# Column 0 still carries FantasyPros' `rank_ecr`; it is labelled RK because the pipeline
+# consumes it as this source's rank (see the COLUMN_MAPPINGS['fp'] note). The rename is
+# positional, so the label is cosmetic — but it must match, and the contract test enforces it.
+FP_OUTPUT_COLUMNS = ["RK", "TIER", "PLAYER NAME", "TEAM", "POS", "BYE", "SOS", "ECR VS ADP"]
 
 # Scoring format -> FantasyPros cheatsheet URL. The cheatsheet pages embed the full
 # rankings as a `var ecrData = {...}` JSON blob, available even in the offseason (when
@@ -70,7 +73,7 @@ def _parse_fantasypros_rankings(html: str) -> list[dict]:
     for p in players:
         rows.append(
             {
-                "ECR": p.get("rank_ecr", ""),
+                "RK": p.get("rank_ecr", ""),
                 "TIER": p.get("tier", ""),
                 "PLAYER NAME": p.get("player_name", ""),
                 "TEAM": p.get("player_team_id", ""),

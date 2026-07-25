@@ -219,3 +219,84 @@ class TestBoardSeeding:
         fp = self._fp([["CookJa01", "James Cook", "RB", "BUF"], ["CookJa01", "James Cook", "RB", "BUF"]])
         out = proc._create_consolidated_rankings({"fp": fp}, verbose=False)
         assert len(out) == 1
+
+
+class TestOutputColumnCleanup:
+    """The board shows sharp sources and market context; it does not show tiers, ECR-branded
+    columns, or adp_RK (the market's rank is already carried by ADP / POS ADP / ADP ROUND)."""
+
+    def test_excluded_columns(self):
+        from fantasy_pipeline.core.rankings_processor import _is_excluded_output_col
+
+        for col in ("adp_RK", "fp_TIER", "jj_TIER", "TIER", "ECR", "POS ECR", "ECR Delta", "ECR ADP Delta"):
+            assert _is_excluded_output_col(col), col
+
+    def test_kept_columns(self):
+        from fantasy_pipeline.core.rankings_processor import _is_excluded_output_col
+
+        # adp_POS RANK stays for positional context — it just doesn't feed avg_POS RANK.
+        for col in ("fp_RK", "jj_RK", "adp_POS RANK", "fp_POS RANK", "ADP", "POS ADP", "ADP ROUND", "HIST_TOTAL_FPTS"):
+            assert not _is_excluded_output_col(col), col
+
+    def test_excluded_columns_are_dropped_from_the_board(self):
+        import pandas as pd
+
+        proc = RankingsProcessor("redraft")
+        df = pd.DataFrame(
+            {
+                "PLAYER ID": ["CookJa01"],
+                "PLAYER NAME": ["James Cook"],
+                "POS": ["RB"],
+                "TEAM": ["BUF"],
+                "ADP": [10.0],
+                "avg_RK": [9.0],
+                "fp_RK": [8.0],
+                "jj_RK": [9.0],
+                "adp_RK": [10.0],
+                "fp_TIER": [2.0],
+                "ECR": [8.0],
+            }
+        )
+        out = proc._organize_final_dataframe(df, verbose=False)
+        # Uncategorised columns fall through to `other_columns`, so a dropped column that
+        # slipped past would silently reappear at the END of the table rather than vanish.
+        for col in ("adp_RK", "fp_TIER", "ECR"):
+            assert col not in out.columns
+        assert "fp_RK" in out.columns
+
+
+class TestFpExcludedFromConsensus:
+    """FantasyPros' ECR is itself an average of ~100 experts, not an independent opinion.
+
+    Averaging it with the sharp individual sources double-counts the industry consensus and
+    dilutes the divergence the board measures — so fp is displayed but kept out of the math.
+    """
+
+    def test_fp_is_not_a_consensus_source(self):
+        from fantasy_pipeline.core.rankings_processor import _is_derived_or_market_col
+
+        assert _is_derived_or_market_col("fp_RK")
+        assert _is_derived_or_market_col("fp_POS RANK")
+
+    def test_fpts_is_still_a_consensus_source(self):
+        # 'fpts_' (Scott Barrett, sharp) must not be caught by the 'fp_' prefix.
+        from fantasy_pipeline.core.rankings_processor import _is_derived_or_market_col
+
+        assert not _is_derived_or_market_col("fpts_RK")
+        assert not _is_derived_or_market_col("fpts_POS RANK")
+
+    def test_avg_rk_ignores_fp(self):
+        import pandas as pd
+
+        proc = RankingsProcessor("redraft")
+        df = pd.DataFrame({"pff_RK": [1.0], "ds_RK": [3.0], "fp_RK": [99.0]})
+        out = proc._calculate_average_rankings(df, verbose=False)
+        assert out["avg_RK"].iloc[0] == 2.0
+
+    def test_avg_pos_rank_ignores_fp_and_adp(self):
+        import pandas as pd
+
+        proc = RankingsProcessor("redraft")
+        df = pd.DataFrame({"pff_POS RANK": [1.0], "ds_POS RANK": [3.0], "fp_POS RANK": [99.0], "adp_POS RANK": [99.0]})
+        out = proc._calculate_average_rankings(df, verbose=False)
+        assert out["avg_POS RANK"].iloc[0] == 2.0

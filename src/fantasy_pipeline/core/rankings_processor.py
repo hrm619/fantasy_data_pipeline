@@ -51,12 +51,28 @@ from ..scraper.integration import auto_scrape_if_needed
 # attenuating the very divergence signal the board exists to measure (~27% narrower spread
 # when it was included). 'avg_'/'sd_' guard against a derived column feeding itself if the
 # averages are ever recomputed on an already-processed frame.
-_NON_CONSENSUS_PREFIXES = ("adp_", "avg_", "sd_")
+# `fp_` is FantasyPros' ECR — itself an average of ~100 experts, not an independent opinion.
+# Averaging an aggregate together with the sharp individual sources double-counts the
+# industry consensus and dilutes exactly the divergence the board exists to measure, so fp is
+# displayed but kept out of the math. Same reasoning as `adp_` (market, and on both sides of
+# ADP Delta). Note "fpts_" does NOT match this prefix — that is Scott Barrett, a sharp source.
+_NON_CONSENSUS_PREFIXES = ("adp_", "avg_", "sd_", "fp_")
+
+# Kept off the output table entirely: tiers (each source bins differently, so they don't
+# compare), ECR-derived columns, and adp_RK (the market's rank is already carried by ADP /
+# POS ADP / ADP ROUND, and adp_POS RANK stays for positional context).
+_EXCLUDED_OUTPUT_COLUMNS = ("adp_RK",)
 
 
 def _is_derived_or_market_col(col: str) -> bool:
-    """True if `col` is market data or a derived stat, and so must not feed a consensus average."""
+    """True if `col` is market data, a consensus-of-consensus, or a derived stat, and so must
+    not feed a consensus average."""
     return col.startswith(_NON_CONSENSUS_PREFIXES)
+
+
+def _is_excluded_output_col(col: str) -> bool:
+    """True if `col` is deliberately not shown on the final board."""
+    return col in _EXCLUDED_OUTPUT_COLUMNS or "ECR" in col or col == "TIER" or col.endswith("_TIER")
 
 
 class RankingsProcessor:
@@ -756,6 +772,15 @@ class RankingsProcessor:
         # Remove any duplicate columns that may have been created during merges
         df_rank = df_rank.loc[:, ~df_rank.columns.duplicated()].copy()
 
+        # Drop the columns the board deliberately doesn't show, BEFORE the ordering logic
+        # below: uncategorised columns fall through to `other_columns` and would reappear at
+        # the end of the table rather than being removed.
+        dropped = [col for col in df_rank.columns if _is_excluded_output_col(col)]
+        if dropped:
+            df_rank = df_rank.drop(columns=dropped)
+            if verbose:
+                print(f"   ✓ Dropped {len(dropped)} column(s) from the output: {', '.join(dropped)}")
+
         # Reorder columns logically
         all_columns = list(df_rank.columns)
         base_columns = ["PLAYER ID", "PLAYER NAME", "POS", "TEAM"]
@@ -791,8 +816,9 @@ class RankingsProcessor:
                 df_rank["ECR ADP Delta"] = df_rank["ADP"] - df_rank["ECR"]
                 ecr_columns.append("ECR ADP Delta")
 
-        # Regular RK columns (excluding average). This drives column ORDER, so it keeps
-        # adp_RK — the board still displays it; it just must not feed the consensus stats.
+        # Regular RK columns (excluding average). This drives column ORDER. adp_RK is already
+        # gone by here (see _EXCLUDED_OUTPUT_COLUMNS); fp_RK is still present and displayed,
+        # it just doesn't feed the consensus stats below.
         rk_columns = [col for col in all_columns if "_RK" in col and not col.startswith("avg_")]
 
         # RK columns and calculations - skip for weekly/ROS
