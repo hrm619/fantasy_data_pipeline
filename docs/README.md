@@ -10,6 +10,9 @@ processor. Start with the repo root [`README.md`](../README.md) for the overview
   the `fetch-*` / `login` / `refresh-all` commands, schemas, and saved-session auth.
 - **[API Reference](api/source-library.md)** — the `fantasy_pipeline` package: `RankingsProcessor`,
   the `return_dataframe` seam, fetchers, auth, and config.
+- **[Expert Accuracy & Bias Analysis](expert-accuracy-analysis.md)** — scoring historical preseason
+  rankings against real outcomes: schema, the rank/points/tier scoring design, conviction-vs-market
+  analysis, and the statistical guardrails. Research workstream, separate from the pipeline.
 
 ## See also
 
