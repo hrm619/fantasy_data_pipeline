@@ -46,6 +46,59 @@ class TestRedraftTitleMatch:
     def test_rejects_non_1qb_redraft(self, title):
         assert not _jj_is_redraft_title(title)
 
+    def test_matches_rolling_thread_without_1qb_in_title(self):
+        """JJ's post-LateRound rolling thread names no format; requiring '1qb' skipped it.
+
+        Since 2026-07 the monthly posts are replaced by one thread updated in place, titled
+        'Redraft Rankings and Tiers' (the body, not the title, says single-quarterback). It
+        must match or the fetcher keeps serving the last monthly post as it goes stale.
+        """
+        assert _jj_is_redraft_title("Redraft Rankings and Tiers")
+
+    def test_rolling_thread_still_excludes_superflex(self):
+        """Superflex has its own parallel thread — the two must not be confused."""
+        assert not _jj_is_redraft_title("Superflex Redraft Rankings and Tiers")
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "2QB Redraft Rankings and Tiers",
+            "2 QB Redraft Rankings and Tiers",
+            "Two-QB Redraft Rankings and Tiers",
+            "Super Flex Redraft Rankings and Tiers",  # regex needs \s — 'superflex' alone misses
+            "SF Redraft Rankings and Tiers",
+            "Best-Ball Redraft Rankings",  # hyphenated — a literal 'best ball' check misses
+            "Dynasty Redraft Startup Rankings",
+            "Rookie Redraft Rankings",
+            "ROS Redraft Rankings",
+            "Rest of Season Redraft Rankings",  # unhyphenated — 'rest-of-season' alone misses
+            "Redraft Auction Values",
+        ],
+    )
+    def test_bare_redraft_fallback_rejects_other_formats(self, title):
+        """The fallback branch accepts a bare 'redraft', so it needs the strict exclusions.
+
+        Every one of these was accepted by the first version of the fallback, which only
+        excluded a literal 'best ball' plus the branch-1 regex.
+        """
+        assert not _jj_is_redraft_title(title)
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "May 2026 1QB Redraft and Best Ball Rankings Update (5/11/26)",
+            "August 2025 1QB Redraft and Best Ball Rankings",
+        ],
+    )
+    def test_strict_exclusions_do_not_apply_to_explicit_1qb_titles(self, title):
+        """The monthly titles literally contain 'Best Ball'.
+
+        Applying the fallback's strict exclusion set to branch 1 as well would reject the
+        very titles this function has matched since it was written — the trap in sharing one
+        exclusion list between the two branches.
+        """
+        assert _jj_is_redraft_title(title)
+
 
 class TestPostIdFromUrl:
     def test_extracts_id(self):

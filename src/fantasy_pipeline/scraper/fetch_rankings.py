@@ -1277,10 +1277,38 @@ def _jj_output_filename(year: int) -> str:
 
 
 def _jj_is_redraft_title(title: str) -> bool:
-    """True if a collection post title is the 1QB redraft (not superflex/ROS/weekly)."""
+    """True if a collection post title is the 1QB redraft (not superflex/ROS/weekly).
+
+    Two title shapes, because JJ moved his membership to LateRound.com in mid-2026:
+    - The old monthly posts name the format ('June 2026 1QB Redraft and Best Ball Rankings').
+    - Since 2026-07 he keeps a single rolling thread updated each month, titled just
+      'Redraft Rankings and Tiers' — no '1qb' anywhere in it, though the body says "This is
+      for single-quarterback redraft rankings". Requiring '1qb' therefore skipped the newest
+      post and silently kept serving the last monthly one, which goes stale as he stops
+      posting monthly.
+
+    **The two branches carry different exclusions on purpose.** An explicit '1qb' title says
+    what it is, so it only needs the narrow set. The bare-'redraft' fallback is a much weaker
+    signal and needs the strict set — but that set canNOT be applied to branch 1, because the
+    monthly titles literally contain 'Best Ball' ('...1QB Redraft and Best Ball Rankings')
+    and a shared exclusion list would reject the very titles this function has always matched.
+
+    This is a prefilter, not the arbiter: `_jj_discover_post_ids` returns every match and the
+    caller keeps trying until an attachment resolves, so a title this lets through (a prose
+    article, say) costs a wasted API call rather than a wrong board.
+    """
     t = (title or "").lower()
-    return (
-        "1qb" in t and ("redraft" in t or "season-long" in t) and not re.search(r"superflex|rest-of-season|weekly", t)
+    if re.search(r"superflex|rest-of-season|weekly", t):
+        return False
+    if "1qb" in t and ("redraft" in t or "season-long" in t):
+        return True
+    if "redraft" not in t:
+        return False
+    # Bare 'redraft': accept only if nothing marks it as another format or a non-rankings post.
+    return not re.search(
+        r"super\s*flex|\bsf\b|\b2\s*-?qb|two[-\s]?qb|dynasty|rookie|best[-\s]?ball"
+        r"|rest[-\s]?of[-\s]?season|\bros\b|auction",
+        t,
     )
 
 
@@ -1344,8 +1372,15 @@ def _jj_api_json(context, url: str) -> dict:
     return json.loads(body)
 
 
-def _jj_discover_post_id(page) -> str:
-    """Find the latest 1QB redraft post id from the collection page (newest-first)."""
+def _jj_discover_post_ids(page) -> list:
+    """Candidate 1QB redraft post ids from the collection page, newest-first (DOM order).
+
+    Returns *every* title match rather than only the first. The title is a weak signal — the
+    rolling thread names no format at all — so the real arbiter is `_jj_attachment`, which
+    requires a `Redraft1QB` filename. The caller walks this list until one resolves, so a
+    false positive (a prose article, a post whose attachments moved) costs one API call
+    instead of aborting the fetch.
+    """
     page.goto(JJ_COLLECTION_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(4000)
     for _ in range(3):  # lazy-loaded list — scroll to surface more posts
@@ -1363,13 +1398,13 @@ def _jj_discover_post_id(page) -> str:
           return out;
         }"""
     )
-    pick = next((p for p in posts if _jj_is_redraft_title(p["title"])), None)
-    if not pick:
+    candidates = [p["id"] for p in posts if _jj_is_redraft_title(p["title"])]
+    if not candidates:
         raise RuntimeError(
             "No 1QB redraft post found in the LateRound collection "
             f"({JJ_COLLECTION_URL}) — pass --post-url with the current post explicitly."
         )
-    return pick["id"]
+    return candidates
 
 
 def _jj_attachment(context, post_id: str) -> tuple:
@@ -1419,10 +1454,32 @@ def _jj_fetch_rows(storage_state: str, post_url: str | None) -> list:
                 viewport={"width": 1400, "height": 1200},
             )
             page = context.new_page()
-            post_id = _jj_post_id_from_url(post_url) if post_url else _jj_discover_post_id(page)
-            if not post_id:
-                raise RuntimeError(f"Could not parse a post id from --post-url {post_url!r}")
-            file_name, download_url = _jj_attachment(context, post_id)
+            if post_url:
+                post_id = _jj_post_id_from_url(post_url)
+                if not post_id:
+                    raise RuntimeError(f"Could not parse a post id from --post-url {post_url!r}")
+                candidates = [post_id]
+            else:
+                candidates = _jj_discover_post_ids(page)
+
+            # Newest-first: take the first candidate that actually carries a Redraft1QB
+            # attachment. The title filter is only a prefilter (see _jj_is_redraft_title),
+            # so a match that has no attachment is an expected miss, not a failure — but if
+            # NONE resolve, raise the last error rather than a vague "not found".
+            resolved = None
+            last_exc = None
+            for candidate in candidates:
+                try:
+                    resolved = _jj_attachment(context, candidate)
+                    break
+                except RuntimeError as exc:
+                    last_exc = exc
+            if resolved is None:
+                raise RuntimeError(
+                    f"None of the {len(candidates)} candidate redraft post(s) carried a "
+                    f"Redraft1QB attachment. Last error: {last_exc}"
+                ) from last_exc
+            file_name, download_url = resolved
             raw = context.request.get(download_url).body()
             from fantasy_pipeline.scraper.auth import save_context_state
 

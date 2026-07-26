@@ -755,6 +755,27 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
   was dropped) — `_jj_adapt_rows` pads it back to the 6-col `COLUMN_MAPPINGS['jj']` width (both `.csv` and
   `.xlsx` attachments are handled) → `Redraft1QB_<year>.csv`. CLI: **`ff-rankings fetch-jj [--output DIR]
   [--post-url URL] [--year N] [--min-players N]`**.
+  - **JJ moved to LateRound.com mid-2026 and changed his posting shape**, which quietly stranded the
+    fetcher on a stale board. The monthly posts named the format (`June 2026 1QB Redraft and Best Ball
+    Rankings`); since 2026-07 he keeps **one rolling thread updated in place**, titled just `Redraft
+    Rankings and Tiers` — the *body* says single-quarterback, the title says nothing. `_jj_is_redraft_title`
+    required `"1qb"`, so it skipped the newest post and kept serving the last monthly one (a June 2 board
+    when a July 24 one was live). It now also accepts a bare `redraft` title.
+  - **The attachment filter is what makes this safe, not the title filter.** `_jj_attachment` requires
+    `redraft1qb` in the filename, so `RedraftSuperflex_072426.csv` — sitting in the *same* post — can never
+    be picked, whatever the title check does. Treat `_jj_is_redraft_title` as a prefilter only:
+    `_jj_discover_post_ids` returns **every** match and `_jj_fetch_rows` walks them until an attachment
+    resolves, so a false positive costs one API call. **Do not relax `_jj_attachment` on the grounds that
+    the title check covers it** — that inverts the actual safety property and turns a loud failure into a
+    silently wrong board.
+  - **The two title branches carry different exclusions on purpose.** An explicit `1qb` title only needs
+    the narrow set; the bare-`redraft` fallback needs the strict one (`super\s*flex`, `\bsf\b`, `2qb`,
+    `dynasty`, `rookie`, `best-ball`, `rest of season`, `\bros\b`, `auction`). The strict set **must not**
+    be applied to branch 1 — the monthly titles literally contain `Best Ball`, so one shared exclusion list
+    would reject the titles that have always matched. `test_strict_exclusions_do_not_apply_to_explicit_1qb_titles`
+    pins this.
+  - Symptom to watch for: `jj_RK` frozen across runs while the other sources move. The attachment filename
+    carries JJ's own date stamp (`Redraft1QB_072426.csv`) — check it against the rolling thread.
 
 ### Saved-session auth for account-gated sources (`scraper/auth.py`)
 
