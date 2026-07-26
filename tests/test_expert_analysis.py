@@ -266,3 +266,186 @@ class TestConviction:
         assert abs(top_call["delta_value"]) > abs(tail_call["delta_value"])
         assert top_call["is_big_call"]
         assert not tail_call["is_big_call"]
+
+
+# --------------------------------------------------------------------------------------
+# Supplemental boards: files that carry an expert's board better than the snapshot did.
+# --------------------------------------------------------------------------------------
+
+
+def _write_supplemental(tmp_path, name, rows, header="Player,Team,Pos,Rank,ADP\n"):
+    path = tmp_path / name
+    path.write_text(header + "".join(rows))
+    return path
+
+
+def test_supplemental_underdog_adp_is_ranked_not_passed_through(tmp_path):
+    """Underdog publishes best-ball ADP as a decimal (1.2, 2.3) and overall_rank is Int64.
+
+    Passing the raw value through truncates 1.2 and 1.9 to the same 1, manufacturing ties
+    and scrambling the top of the board. The market series must carry a RANK.
+    """
+    from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+    _write_supplemental(
+        tmp_path,
+        "hw-test.csv",
+        [
+            "Christian McCaffrey,SF,RB,1,1.2\n",
+            "CeeDee Lamb,DAL,WR,2,1.9\n",
+            "Breece Hall,NYJ,RB,3,6.4\n",
+        ],
+    )
+    spec = SupplementalBoard(
+        season=2024,
+        expert="hw",
+        filename="hw-test.csv",
+        as_of_date="2024-08-20",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+        market_col="ADP",
+    )
+    out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+
+    market = out[out["expert"] == "adp_underdog"].sort_values("overall_rank")
+    assert list(market["overall_rank"]) == [1, 2, 3], "decimal ADP must become a distinct rank"
+    assert market["overall_rank"].nunique() == 3, "1.2 and 1.9 must not collapse to the same rank"
+
+
+def test_supplemental_market_is_a_separate_expert_from_adp(tmp_path):
+    """Underdog best-ball ADP must never merge into the redraft consensus `adp` series."""
+    from fantasy_pipeline.analysis.historical import EXPERT_KINDS, SupplementalBoard, _load_supplemental_board
+
+    _write_supplemental(tmp_path, "hw-test.csv", ["Christian McCaffrey,SF,RB,1,1.2\nCeeDee Lamb,DAL,WR,2,2.3\n"])
+    spec = SupplementalBoard(
+        season=2024,
+        expert="hw",
+        filename="hw-test.csv",
+        as_of_date="2024-08-20",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+        market_col="ADP",
+    )
+    out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+
+    assert set(out["expert"]) == {"hw", "adp_underdog"}
+    assert "adp" not in set(out["expert"])
+    assert EXPERT_KINDS["adp_underdog"] == "market"
+    assert EXPERT_KINDS["adp"] == "market"
+
+
+def test_supplemental_board_drops_non_skill_positions(tmp_path):
+    from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+    _write_supplemental(
+        tmp_path,
+        "hw-test.csv",
+        ["Christian McCaffrey,SF,RB,1,1.2\nJustin Tucker,BAL,K,2,2.3\n"],
+    )
+    spec = SupplementalBoard(
+        season=2024,
+        expert="hw",
+        filename="hw-test.csv",
+        as_of_date="2024-08-20",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+    )
+    out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+    assert set(out["pos"]) <= {"QB", "RB", "WR", "TE"}
+
+
+def test_supplemental_board_missing_file_raises(tmp_path):
+    from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+    spec = SupplementalBoard(
+        season=2024,
+        expert="hw",
+        filename="nope.csv",
+        as_of_date="2024-08-20",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+    )
+    with pytest.raises(FileNotFoundError):
+        _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+
+
+def test_analysis_seasons_include_2023():
+    """2023 has no snapshot, only a supplemental HW board — but PFR carries its outcomes."""
+    from fantasy_pipeline.analysis.historical import ANALYSIS_SEASONS
+
+    assert 2023 in ANALYSIS_SEASONS
+
+
+# --------------------------------------------------------------------------------------
+# Bootstrap intervals
+# --------------------------------------------------------------------------------------
+
+
+def test_rankdata_averages_ties():
+    from fantasy_pipeline.analysis.scorecard import _rankdata
+
+    assert list(_rankdata(np.array([10.0, 20.0, 20.0, 40.0]))) == [1.0, 2.5, 2.5, 4.0]
+
+
+def test_spearman_ci_brackets_the_point_estimate():
+    """A real percentile CI must contain the statistic it is an interval for."""
+    from fantasy_pipeline.analysis.scorecard import _spearman, _spearman_ci
+
+    rng = np.random.default_rng(0)
+    a = pd.Series(np.arange(1, 61, dtype=float))
+    b = a + pd.Series(rng.normal(0, 5, 60))
+    point = _spearman(a, b)
+    lo, hi = _spearman_ci(a, b, n_boot=200, rng=rng)
+    assert lo <= point <= hi
+    assert lo < hi
+
+
+def test_spearman_ci_returns_nan_when_too_few_players():
+    from fantasy_pipeline.analysis.scorecard import _spearman_ci
+
+    rng = np.random.default_rng(0)
+    lo, hi = _spearman_ci(pd.Series([1.0, 2.0]), pd.Series([2.0, 1.0]), n_boot=50, rng=rng)
+    assert np.isnan(lo) and np.isnan(hi)
+
+
+def test_tier_stability_range_is_ordered_and_bounded():
+    """It is a stability range, not a CI — but it still must be a valid [lo, hi] in [0, 1]."""
+    from fantasy_pipeline.analysis.scorecard import tier_hit_stability_range
+
+    values = [30.0, 28.0, 27.5, 20.0, 19.5, 19.0, 12.0, 11.5, 11.0, 5.0, 4.5, 4.0]
+    outcomes = _outcomes(values)
+    joined = _ranked("pff", list(range(1, len(values) + 1))).merge(
+        outcomes[["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]],
+        on=["season", "player_id"],
+    )
+    enriched = add_value_curve(joined, outcomes)
+
+    rng_out = tier_hit_stability_range(enriched, outcomes, n_boot=40, seed=0)
+    assert not rng_out.empty
+    row = rng_out.iloc[0]
+    assert 0.0 <= row["tier_stability_lo"] <= row["tier_stability_hi"] <= 1.0
+
+
+def test_scorecard_reports_intervals_and_tier_edge():
+    from fantasy_pipeline.analysis.scorecard import expert_scorecard as _sc
+
+    values = [30.0, 28.0, 27.5, 20.0, 19.5, 19.0, 12.0, 11.5, 11.0, 5.0, 4.5, 4.0]
+    outcomes = _outcomes(values)
+    cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+    joined = pd.concat(
+        [
+            _ranked("pff", list(range(1, len(values) + 1))).merge(outcomes[cols], on=["season", "player_id"]),
+            _ranked("ds", list(reversed(range(1, len(values) + 1)))).merge(outcomes[cols], on=["season", "player_id"]),
+        ],
+        ignore_index=True,
+    )
+    enriched = add_value_curve(joined, outcomes)
+    card = _sc(enriched, outcomes, n_boot=40, seed=0)
+
+    for col in ("spearman_common_lo", "spearman_common_hi", "tier_edge_median"):
+        assert col in card.columns
+    assert (card["spearman_common_lo"] <= card["spearman_common_hi"]).all()

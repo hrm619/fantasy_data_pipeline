@@ -14,50 +14,74 @@ Code: `src/fantasy_pipeline/analysis/{historical,scorecard}.py`, tests in
 `tests/test_expert_analysis.py`.
 
 Goal: score historical preseason expert rankings against what players actually did, and surface
-systematic bias. The dataset is a **snapshot** — two seasons that will not change — so the build is
-a one-shot drop-and-recreate, not an incremental pipeline.
+systematic bias. The dataset is a **snapshot** — three seasons that will not change — so the build
+is a one-shot drop-and-recreate, not an incremental pipeline. Adding a season is an adapter entry
+plus a rebuild; `SUPPLEMENTAL_BOARDS` exists so that is a few lines, not a new code path.
 
 ---
 
 ## 1. Source data
 
-`data/rankings_historical/` (gitignored, local only):
+`data/rankings_historical/` (gitignored, local only). Two kinds of input: the wide **snapshots**,
+and per-expert **supplemental boards** that carry one expert's board better than a snapshot did.
 
 | File | Rows | Shape |
 |---|---|---|
 | `2024 Pre-Season Rankings (August 20 2024).csv` | 217 | Hand-built spreadsheet, bespoke schema |
 | `2025 Pre-Season Rankings (August 22 2025).csv` | 270 | This pipeline's own output + extra columns |
+| `hw-2023.csv` | 254 | Underdog export — the only 2023 board |
+| `hw-2024.csv` | 273 | Underdog export — overall ranks the snapshot lacked |
+| `pff-2025.csv` | 512 | PFF's own export, recovered from `raw archive/` |
 
-The two files share no schema, so each gets its own adapter.
+Every file gets its own adapter. Supplemental boards **override** the snapshot for their
+(season, expert) rather than adding a second copy of one expert's opinion — see
+`SUPPLEMENTAL_BOARDS` in `analysis/historical.py`.
 
 ### Experts and coverage
 
-| Expert | key | 2024 | 2025 |
-|---|---|---|---|
-| FantasyPros ECR | `fp` | 217 | 270 |
-| PFF | `pff` | 216 | 261 |
-| DraftSharks | `ds` | 147 | 261 |
-| Hayden Winks | `hw` | 217 *(positional only)* | 257 |
-| 4 For 4 | `4for4` | 183 | — |
-| The Ringer | `ringer` | 145 | — |
-| Scott Barrett | `fpts` | — | 100 |
-| JJ Zachariason | `jj` | — | 243 |
-| ADP (market) | `adp` | 217 | 270 |
+| Expert | key | 2023 | 2024 | 2025 |
+|---|---|---|---|---|
+| FantasyPros ECR | `fp` | — | 217 | 254 |
+| PFF | `pff` | — | 216 | 448 |
+| DraftSharks | `ds` | — | 147 | 245 |
+| Hayden Winks | `hw` | 253 | 273 | 242 |
+| 4 For 4 | `4for4` | — | 183 | — |
+| The Ringer | `ringer` | — | 145 | — |
+| Scott Barrett | `fpts` | — | — | 100 |
+| JJ Zachariason | `jj` | — | — | 231 |
+| Consensus redraft ADP (market) | `adp` | — | 217 | 254 |
+| Underdog best-ball ADP (market) | `adp_underdog` | 253 | 273 | — |
 
-**Only `fp`, `pff` and `ds` have comparable overall ranks in both seasons.** `hw` overlaps but 2024
-is positional-only (`"RB1"`), so it is comparable at positional granularity only. Everything else is
-single-season and usable for within-year work.
+**`fp`, `pff`, `ds` and `hw` have comparable overall ranks in 2024 and 2025.** `hw` joined that set
+once `hw-2024.csv` supplied his overall ranks — the snapshot carried him positionally only
+(`"RB1"`). **2023 is `hw` alone**, so it is a solo accuracy record, not a head-to-head.
 
 Excluded by decision: personal/league-mate columns (`HankRank`, `My Rank`, `TARGET`, and the
-`SCOTT`/`RYAN`/`JJ`/`HAYDEN`/`JOSH` columns, which exported as 262 rows of `#NAME?` anyway), and the
-2024 `Underdog` column — that is **best-ball ADP, not an expert ranking**.
+`SCOTT`/`RYAN`/`JJ`/`HAYDEN`/`JOSH` columns, which exported as 262 rows of `#NAME?` anyway).
+
+### The two markets are not one market
+
+`adp` is **consensus redraft ADP**; `adp_underdog` is **Underdog best-ball ADP**. Best-ball pays for
+weekly spikes and never starts anyone, so it systematically bids up high-variance pass-catchers —
+a different game at different prices. Where both exist they correlate **0.965**: close enough to be
+tempting, not close enough to be the same bet.
+
+They are therefore loaded as **separate market series and never pooled**. Conviction is reported
+once per market, in its own block, labelled with the seasons it covers. 2024 carries both precisely
+so the divergence can be *measured* rather than assumed. (The 2024 snapshot's own `Underdog` column
+was originally excluded as "not an expert ranking" — correct, but it is a legitimate *market*, and
+it is what makes 2023's conviction numbers interpretable at all.)
 
 ### Known defects — carry these into every result
 
-1. **PFF's 2025 #1 is missing.** `pff_RK` starts at 2. This is the documented `read_csv`
-   header-detection bug (a blank line before the header meant the first data row was consumed as
-   column names). Surviving ranks are **true, not shifted** — one player is simply absent, and it is
-   PFF's single highest-conviction call. Unrecoverable from these files.
+1. ~~**PFF's 2025 #1 is missing.**~~ **Recovered.** `pff_RK` started at 2 in the snapshot — the
+   documented `read_csv` header-detection bug (a blank line before the header meant the first data
+   row was consumed as column names), which cost PFF its single highest-conviction call. The
+   original export was still sitting in `data/rankings current/raw archive/processed_20250822_1914/`
+   from the same day, so it was never actually unrecoverable — nobody had looked there. It now loads
+   as the `pff-2025` supplemental board: **Bijan Robinson at rank 1**, and 448 scorable skill players
+   instead of 245. Read through the pipeline's own `load_data`, whose fixed header detection is what
+   makes rank 1 readable in the first place.
 2. **Empty columns.** All six talent/situation grade columns are 0 non-null. `Underdog ADP Pos Rank`
    is 217 `#REF!`.
 3. **The 2025 snapshot is pipeline output**, so any pipeline defect live in Aug 2025 is baked in.
@@ -66,8 +90,9 @@ Excluded by decision: personal/league-mate columns (`HankRank`, `My Rank`, `TARG
 
 ### Outcomes
 
-`data/fpts historical/combined_data.csv` — 2024 (630 rows) and 2025 (643 rows), with `PPR`,
-`FANTPT`, `G`, `VBD`, `POS RANK`. Half-PPR is derived as `(FANTPT + PPR) / 2`.
+`data/fpts historical/combined_data.csv` — 2023 (632 rows), 2024 (630) and 2025 (643), with `PPR`,
+`FANTPT`, `G`, `VBD`, `POS RANK`. Half-PPR is derived as `(FANTPT + PPR) / 2`. After the skill-position
+filter and PFR de-duplication this yields 615 / 620 / 631 scorable outcomes.
 
 Finish ranks are **recomputed on half-PPR** rather than taken from PFR's `POS RANK`/`RK`/`VBD`, which
 are computed on PFR's own scoring — otherwise outcomes would be measured in different units than the
@@ -83,9 +108,10 @@ or an expert never changes the schema.
 `season`, `as_of_date`, `expert`, `expert_kind`, `player_id`, `overall_rank`, `pos_rank`,
 `rank_scope`, `name_as_published`, `source_file` — PK `(season, expert, player_id)`.
 
-- `expert_kind` ∈ `expert` | `consensus` (fp/ECR) | `market` (adp). Keeps the aggregate and the
-  market out of expert-vs-expert averages — same reasoning as `_NON_CONSENSUS_PREFIXES` on the live
-  board.
+- `expert_kind` ∈ `expert` | `consensus` (fp/ECR) | `market` (`adp`, `adp_underdog`). Keeps the
+  aggregate and the markets out of expert-vs-expert averages — same reasoning as
+  `_NON_CONSENSUS_PREFIXES` on the live board. Note `market` covers **two** series that must not be
+  pooled with each other either; see §1.
 - `rank_scope` ∈ `overall` | `positional`. This is how 2024 Hayden Winks coexists with 2025 `hw_RK`
   without pretending they are the same measurement.
 
@@ -150,9 +176,23 @@ boundaries be chosen to produce a conclusion.
 `tier_hit` = did the expert's rank imply the tier the player actually landed in?
 
 **This metric is knife-edge and must be reported as such.** A player 0.1 PPG from a boundary flips
-tiers, so tier hit-rate reads as precise while resting on an arbitrary line. Mitigation: report each
-player's **distance to the nearest tier boundary**, and bootstrap the boundaries to give a hit-rate
-interval rather than a point estimate. Where the interval is wide, prefer 3b.
+tiers, so tier hit-rate reads as precise while resting on an arbitrary line. Two mitigations now
+ship: `tier_edge_median` (median distance from a scored player to the nearest break, in metric
+units) and `tier_stability_95ci`.
+
+**The stability result: largest-gap segmentation does not survive resampling.** Re-deriving the
+breaks from a bootstrap sample and re-scoring gives ranges that routinely *exclude* the point
+estimate — 2024 `ds` scores 0.500 against a range of [0.25, 0.41]. That would be incoherent for a
+sampling CI, which is why it is **reported as a stability range and explicitly not as a confidence
+interval**. The cause is mechanical: a resample of n values contains only ~63% of the distinct
+originals, and the missing ones merge adjacent gaps in the dense low tail, so the largest-gap rule
+relocates the breaks wholesale — 2024 RB cuts sit at 12.2–20.5 on the real data and wander to
+5.9–9.2 under resampling. Deduplicating first does not help (tied values have zero gaps and are
+never chosen as breaks).
+
+**Practical consequence: prefer points space (§3b) for anything load-bearing.** It needs no
+boundaries, so it cannot inherit this instability. Tier hit-rate stays because it is readable, not
+because it is reliable.
 
 ### 3d. Availability — run everything twice
 
@@ -204,13 +244,18 @@ manufactures confident nonsense.
 - **Minimum cell size.** `expert × position × draft region` over two seasons produces tiny cells.
   "Best at late-round WRs" may be 5–10 players. Cells below a floor (n ≥ 10) report as *insufficient*
   rather than as a number.
-- **Multiple comparisons.** ~3 comparable experts × 4 positions × 3 regions ≈ 36 cells; at α = 0.05
+- **Multiple comparisons.** ~4 comparable experts × 4 positions × 3 regions ≈ 48 cells; at α = 0.05
   roughly two will look "significant" by chance. Results are **hypothesis-generating**, reported with
   confidence intervals rather than bare p-values, with FDR control where testing is formalised.
-- **Sample size, plainly.** Two seasons, ~200 players, three truly comparable experts. Spearman
-  differences below ~0.05 are indistinguishable from noise. This can rank experts *directionally* and
-  surface patterns worth watching. It cannot establish that one expert is better than another, and no
-  amount of slicing will change that — slicing makes it worse.
+- **Sample size, plainly.** Three seasons, ~250 players each, four comparable experts in 2024–2025
+  and one in 2023. Spearman differences below ~0.05 are indistinguishable from noise. This can rank
+  experts *directionally* and surface patterns worth watching. It cannot establish that one expert is
+  better than another, and no amount of slicing will change that — slicing makes it worse.
+- **The intervals confirm this, and they are the point.** `spearman_common_95ci` is a percentile
+  bootstrap over players. On the 2024 board the five experts span 0.675–0.727 with intervals like
+  [0.59, 0.76] and [0.64, 0.79] — **total overlap**. The scorecard prints a clean descending ordering
+  and that ordering is noise. Read the intervals before believing any ranking; where they overlap,
+  the gap between point estimates is not evidence.
 - **Post-hoc tiers.** See §3c.
 - **Survivorship.** Players ranked but who never played, and the missing PFF #1, are documented
   exclusions, not silent drops.
@@ -258,12 +303,35 @@ Two design corrections followed from it:
   where the market did carry `delta_value == 0`; leaving them in the quantile basis drags the cutoff to
   zero and promotes trivial calls into "big" ones.
 
+### Discovered while folding in the supplemental boards
+
+- **Underdog publishes best-ball ADP as a decimal (`1.2`, `2.3`, `6.4`), and `overall_rank` is
+  stored as `Int64`.** Passing the raw value through truncates `1.2` and `1.9` to the same `1`,
+  manufacturing ties and quietly scrambling the top of the board. The market series therefore carries
+  a **rank of the ADP**, not the ADP itself. The snapshot's own ADP column happens to be integral, so
+  this trap appears only on the Underdog files — pinned by
+  `test_supplemental_underdog_adp_is_ranked_not_passed_through`. (Same family as the DraftSharks
+  `round.pick` trap in the main pipeline: numeric-looking, plausible, and wrong.)
+- **`hw-2024.csv` is the same board as the snapshot's HW column, not a different vintage.** Derived
+  positional ranks correlate **0.994** against the snapshot's published ones. That is what justifies
+  overriding rather than treating it as a second source — checked before the swap, not assumed.
+- **Two name aliases were blocking real players.** `Devon Achane` (the file's spelling; PFR and the
+  dict say `DeVon Achane`, `AchaDe00`) and `Mitch Trubisky` (PFR: `Mitchell Trubisky`, `TrubMi00`) —
+  both verified against PFR ground truth and position-checked before being added to
+  `player_key_dict.json`. `DeWayne McBride` remains unmatched and correctly so: PFR has no such
+  player, only Tre and Trey McBride, who are different people. Unverifiable is not wrong.
+
 ## 8. Open questions
 
 - Games-played floor for PPG: 8 is a placeholder; sensitivity check it.
-- Tier segmentation method: natural breaks vs largest-gap vs 1-D k-means — pick by stability under
-  bootstrap, not by which looks tidiest.
-- Should `hw` 2024 (positional-only) be included in positional analyses, or excluded entirely for
-  consistency with its 2025 overall ranks?
-- Is a third season available from anywhere (2023 or earlier)? It would do more for confidence than
-  any modelling choice here.
+- ~~Tier segmentation method — pick by stability under bootstrap.~~ **Answered, badly:** largest-gap
+  is *not* stable (§3c). The open question is now whether 1-D k-means or Fisher–Jenks is materially
+  better, or whether tier space should be demoted to a presentation layer over §3b.
+- ~~Should `hw` 2024 (positional-only) be included in positional analyses?~~ **Resolved** —
+  `hw-2024.csv` supplies overall ranks, so `hw` is now scored exactly like every other expert in all
+  three seasons and needs no special case.
+- ~~Is a third season available?~~ **2023 is in**, via `hw-2023.csv`. But it is **one expert**, so it
+  strengthens HW's individual record and adds a third value curve without enabling any new
+  head-to-head. A 2023 board for `fp`/`pff`/`ds` would be worth more than anything else on this list.
+- Does `adp_underdog` belong in the cross-season overlap set? It has 2023+2024 but no 2025, which is
+  the mirror image of `adp`'s 2024+2025 — neither market spans all three seasons.

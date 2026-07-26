@@ -4,6 +4,10 @@ The two snapshot files share no schema — the 2024 board is a hand-built spread
 2025 board is this pipeline's own output — so each gets its own adapter, and both emit the
 same long/tidy shape: one row per (season, expert, player).
 
+A third input sits alongside them: SUPPLEMENTAL_BOARDS, single-expert files that carry a
+board more completely than the snapshot did. They OVERRIDE the snapshot for their
+(season, expert) rather than adding a second copy of the same opinion.
+
 Outcomes come from PFR (`combined_data.csv`), scored in half-PPR to match the board.
 """
 
@@ -12,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -19,6 +24,7 @@ import pandas as pd
 
 from ..config import DEFAULT_PATHS, HISTORICAL_DATA_DIR, project_root
 from ..core.stats_aggregator import _dedupe_season_rows
+from ..data.loader import load_data
 from ..data.player_utils import add_player_ids, clean_player_names, load_player_key_mapping
 
 HISTORICAL_DIR = os.path.join(str(project_root()), "data", "rankings_historical")
@@ -39,6 +45,7 @@ REPLACEMENT_BASELINES = {"QB": 6, "RB": 24, "WR": 30, "TE": 12}
 EXPERT_KINDS: Dict[str, str] = {
     "fp": "consensus",
     "adp": "market",
+    "adp_underdog": "market",
     "pff": "expert",
     "ds": "expert",
     "hw": "expert",
@@ -48,10 +55,87 @@ EXPERT_KINDS: Dict[str, str] = {
     "ringer": "expert",
 }
 
+# Two markets, deliberately kept apart. `adp` is redraft consensus ADP; `adp_underdog` is
+# Underdog BEST-BALL ADP, which is a different game — best-ball pays for weekly spikes and
+# never starts anyone, so it systematically bids up high-variance pass-catchers. They
+# correlate 0.965 where both exist, which is close enough to be tempting and not close
+# enough to be the same thing. Anything that compares an expert to "the market" must say
+# WHICH market; 2024 carries both precisely so the gap can be measured rather than assumed.
+MARKET_EXPERTS = ("adp", "adp_underdog")
+
 SNAPSHOTS = {
     2024: ("2024 Pre-Season Rankings (August 20 2024).csv", "2024-08-20"),
     2025: ("2025 Pre-Season Rankings (August 22 2025).csv", "2025-08-22"),
 }
+
+# Seasons the analysis covers. 2023 has no snapshot — it exists only as a supplemental HW
+# board — but PFR carries its outcomes, so it is a real season for accuracy work.
+ANALYSIS_SEASONS: Tuple[int, ...] = (2023, 2024, 2025)
+
+
+@dataclass(frozen=True)
+class SupplementalBoard:
+    """One expert's board, read from its own file, overriding the snapshot's version.
+
+    These exist because the snapshot lost information the original export had:
+
+    * `pff-2025` — the snapshot's `pff_RK` starts at 2. That is the documented `read_csv`
+      header-detection bug (a blank line before the header meant the first data row was
+      eaten as column names), and it cost PFF its single highest-conviction call. The
+      original export was still in `raw archive/` from the same day, so it IS recoverable —
+      the design doc's "unrecoverable" note predates anyone looking there.
+    * `hw-2024` — the snapshot carried Winks positionally only ("RB1"), which made him
+      incomparable to his own 2025 overall ranks. The Underdog export has overall ranks;
+      derived-vs-published positional ranks correlate 0.994, confirming it is the same
+      board and not a different vintage.
+    * `hw-2023` — no snapshot exists for 2023 at all.
+
+    `market_col`, where present, is Underdog best-ball ADP riding along in the same file.
+    It loads as its own market expert, never merged into `adp`.
+    """
+
+    season: int
+    expert: str
+    filename: str
+    as_of_date: str
+    name_col: str
+    pos_col: str
+    rank_col: str
+    market_col: Optional[str] = None
+    market_expert: str = "adp_underdog"
+
+
+SUPPLEMENTAL_BOARDS: Tuple[SupplementalBoard, ...] = (
+    SupplementalBoard(
+        season=2023,
+        expert="hw",
+        filename="hw-2023.csv",
+        as_of_date="2023-08-01",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+        market_col="ADP",
+    ),
+    SupplementalBoard(
+        season=2024,
+        expert="hw",
+        filename="hw-2024.csv",
+        as_of_date="2024-08-20",
+        name_col="Player",
+        pos_col="Pos",
+        rank_col="Rank",
+        market_col="ADP",
+    ),
+    SupplementalBoard(
+        season=2025,
+        expert="pff",
+        filename="pff-2025.csv",
+        as_of_date="2025-08-22",
+        name_col="Full Name",
+        pos_col="Position",
+        rank_col="Overall Rank",
+    ),
+)
 
 # 2024 hand-built sheet: source column -> (expert, scope). `Underdog` is best-ball ADP, not
 # an expert board, and is deliberately absent; so are the personal columns (HankRank, My
@@ -218,12 +302,75 @@ def _derive_pos_ranks(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _load_supplemental_board(
+    spec: SupplementalBoard,
+    historical_dir: str,
+    player_key_path: str,
+    verbose: bool,
+) -> pd.DataFrame:
+    """Read one single-expert board file into the same tidy shape as the snapshots.
+
+    Uses the pipeline's `load_data` rather than a bare `read_csv` because the PFF export
+    carries a title row and a blank line above its header — auto-detecting that header is
+    precisely the fix that makes rank 1 recoverable in the first place.
+    """
+    path = os.path.join(historical_dir, spec.filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Supplemental board not found: {path}")
+
+    raw = load_data(path)
+    df = raw.rename(columns={spec.name_col: "PLAYER NAME"})
+    df["PLAYER NAME"] = df["PLAYER NAME"].astype(str).str.strip()
+    df["_pos"] = df[spec.pos_col].astype(str).str.upper().str.strip()
+    df = df[df["_pos"].isin(ANALYSIS_POSITIONS)].copy()
+
+    df = _resolve_player_ids(df, player_key_path, name_col="PLAYER NAME")
+    unmatched = df["PLAYER ID"].isna().sum()
+    if unmatched and verbose:
+        names = ", ".join(df.loc[df["PLAYER ID"].isna(), "PLAYER NAME"].head(5))
+        print(f"   ⚠️  {spec.season} {spec.expert}: {unmatched} name(s) unmatched — excluded ({names})")
+    df = df[df["PLAYER ID"].notna()].copy()
+
+    def _block(expert: str, ranks: pd.Series) -> pd.DataFrame:
+        block = pd.DataFrame(
+            {
+                "season": spec.season,
+                "as_of_date": spec.as_of_date,
+                "expert": expert,
+                "expert_kind": EXPERT_KINDS.get(expert, "expert"),
+                "player_id": df["PLAYER ID"],
+                "name_as_published": df["PLAYER NAME"],
+                "pos": df["_pos"],
+                "overall_rank": pd.to_numeric(ranks, errors="coerce"),
+                "pos_rank": pd.NA,
+                "source_file": spec.filename,
+            }
+        )
+        block["pos_rank"] = pd.to_numeric(block["pos_rank"], errors="coerce")
+        return block[block["overall_rank"].notna()]
+
+    frames = [_block(spec.expert, df[spec.rank_col])]
+
+    if spec.market_col and spec.market_col in df.columns:
+        # RANK the ADP values rather than passing them through as the rank. Underdog
+        # publishes best-ball ADP as a decimal average (1.2, 2.3, 6.4) and `overall_rank`
+        # is stored as Int64 — passing the raw value through truncates 1.2 and 1.9 to the
+        # same 1, manufacturing ties and quietly scrambling the top of the board. The
+        # snapshot's own ADP column happens to be integral, so this trap only appears here.
+        adp = pd.to_numeric(df[spec.market_col], errors="coerce")
+        frames.append(_block(spec.market_expert, adp.rank(method="min")))
+
+    out = pd.concat(frames, ignore_index=True)
+    out["rank_scope"] = "overall"
+    return _derive_pos_ranks(out)
+
+
 def build_expert_rankings(
     historical_dir: str = HISTORICAL_DIR,
     player_key_path: str = DEFAULT_PATHS["player_key_file"],
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """Read both snapshot files and return the tidy expert-ranking fact table."""
+    """Read the snapshots plus the supplemental boards, and return the tidy fact table."""
     frames = []
 
     for season, (filename, as_of) in SNAPSHOTS.items():
@@ -253,18 +400,33 @@ def build_expert_rankings(
         frames.append(block)
 
     out = pd.concat(frames, ignore_index=True)
+
+    for spec in SUPPLEMENTAL_BOARDS:
+        supp = _load_supplemental_board(spec, historical_dir, player_key_path, verbose)
+        # Override, don't append. These files carry a board the snapshot already has a worse
+        # copy of, so keeping both would double-count one expert's opinion and — because the
+        # two copies disagree — make the duplicate check below fail for the right reason at
+        # the wrong place.
+        replaced = out[(out["season"] == spec.season) & (out["expert"].isin(supp["expert"].unique()))]
+        out = out.drop(index=replaced.index)
+        out = pd.concat([out, supp], ignore_index=True)
+        if verbose:
+            per_expert = supp.groupby("expert").size().to_dict()
+            was = f"replacing {len(replaced)} snapshot row(s)" if len(replaced) else "new to the analysis"
+            print(f"   ✓ {spec.season} supplemental {spec.filename}: {per_expert} — {was}")
+
     out["overall_rank"] = pd.to_numeric(out["overall_rank"], errors="coerce").astype("Int64")
     out["pos_rank"] = pd.to_numeric(out["pos_rank"], errors="coerce").astype("Int64")
 
     dupes = out.duplicated(["season", "expert", "player_id"]).sum()
     if dupes:
         raise ValueError(f"{dupes} duplicate (season, expert, player_id) rows — a source lists a player twice")
-    return out
+    return out.sort_values(["season", "expert", "overall_rank"]).reset_index(drop=True)
 
 
 def build_player_outcomes(
     combined_data_path: str = COMBINED_DATA_PATH,
-    seasons: Tuple[int, ...] = tuple(SNAPSHOTS),
+    seasons: Tuple[int, ...] = ANALYSIS_SEASONS,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Realized half-PPR outcomes per (season, player), from PFR.

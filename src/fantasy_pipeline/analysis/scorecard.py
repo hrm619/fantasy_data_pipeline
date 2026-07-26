@@ -157,11 +157,138 @@ def _spearman(a: pd.Series, b: pd.Series) -> float:
     return float(a[ok].rank().corr(b[ok].rank()))
 
 
+def _spearman_ci(a: pd.Series, b: pd.Series, n_boot: int, rng, alpha: float = 0.05):
+    """Percentile bootstrap interval for Spearman, resampling PLAYERS with replacement.
+
+    Without this the scorecard prints a clean descending ranking of experts whose whole
+    spread sits inside the noise band the design doc already warns about (differences below
+    ~0.05 are indistinguishable at this sample size). A point estimate invites exactly the
+    conclusion the data cannot support; the interval makes the overlap impossible to miss.
+    """
+    ok = a.notna() & b.notna()
+    x, y = a[ok].to_numpy(dtype=float), b[ok].to_numpy(dtype=float)
+    n = len(x)
+    if n < 5:
+        return float("nan"), float("nan")
+
+    stats = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        xs, ys = x[idx], y[idx]
+        # A resample can draw a constant vector; corrcoef would emit a divide warning and NaN.
+        if len(np.unique(xs)) < 2 or len(np.unique(ys)) < 2:
+            stats[i] = np.nan
+            continue
+        stats[i] = np.corrcoef(_rankdata(xs), _rankdata(ys))[0, 1]
+
+    good = stats[~np.isnan(stats)]
+    if len(good) < max(10, n_boot // 10):
+        return float("nan"), float("nan")
+    return float(np.quantile(good, alpha / 2)), float(np.quantile(good, 1 - alpha / 2))
+
+
+def _rankdata(values: np.ndarray) -> np.ndarray:
+    """Average-tie ranks, equivalent to scipy.stats.rankdata (scipy is not a dependency)."""
+    order = np.argsort(values, kind="mergesort")
+    ranks = np.empty(len(values), dtype=float)
+    ranks[order] = np.arange(1, len(values) + 1, dtype=float)
+    # Average ranks within tied runs so ties don't get an arbitrary order-dependent rank.
+    sorted_vals = values[order]
+    start = 0
+    for i in range(1, len(values) + 1):
+        if i == len(values) or sorted_vals[i] != sorted_vals[start]:
+            if i - start > 1:
+                ranks[order[start:i]] = ranks[order[start:i]].mean()
+            start = i
+    return ranks
+
+
+def _tier_cuts(sorted_desc: np.ndarray, max_tiers: int) -> np.ndarray:
+    """Tier boundaries as midpoints of the largest gaps — the same rule as `assign_tiers`."""
+    if len(sorted_desc) < 2:
+        return np.array([], dtype=float)
+    gaps = sorted_desc[:-1] - sorted_desc[1:]
+    n_breaks = min(max_tiers - 1, max(1, len(sorted_desc) // 12))
+    break_idx = np.argsort(gaps)[-n_breaks:]
+    return np.array([(sorted_desc[b] + sorted_desc[b + 1]) / 2.0 for b in break_idx], dtype=float)
+
+
+def tier_hit_stability_range(
+    joined: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    metric: str = "ppg_half",
+    n_boot: int = 300,
+    seed: int = 0,
+    alpha: float = 0.05,
+    max_tiers: int = 8,
+) -> pd.DataFrame:
+    """How far tier hit-rate moves when the BOUNDARIES are re-derived from a resample.
+
+    Read this as a stability range, **not** a confidence interval, and do not report it as
+    one. The point estimate routinely falls outside it — 2024 `ds` scores 0.500 against a
+    range of [0.25, 0.41] — which would be incoherent for a sampling CI and is exactly the
+    intended signal here: largest-gap segmentation is not stable, so the hit rate is a
+    property of one particular set of breaks rather than of the expert.
+
+    Why it moves so much: a bootstrap resample of n values contains only ~63% of the
+    distinct originals, and the missing ones merge adjacent gaps in the dense low tail. The
+    largest-gap rule then relocates the breaks entirely — 2024 RB cuts sit at 12.2-20.5 on
+    the real data and wander to 5.9-9.2 under resampling. Deduplicating first does not help
+    (tied values have zero gaps and are never selected as breaks).
+
+    Deliberately NOT a resample of players against fixed boundaries: that measures sampling
+    error while treating the breaks as known, which is the assumption actually in doubt.
+    Where this range is wide — it always is — prefer points space (§3b), which needs no
+    boundaries at all.
+    """
+    rng = np.random.default_rng(seed)
+    scored = joined[joined[metric].notna() & joined["implied_value"].notna()]
+    if scored.empty:
+        return pd.DataFrame(columns=pd.Index(["season", "expert", "tier_stability_lo", "tier_stability_hi"]))
+
+    pool = {key: g[metric].dropna().to_numpy(dtype=float) for key, g in outcomes.groupby(["season", "pos"])}
+    # Precompute group slices once; rebuilding them inside the bootstrap loop dominates runtime.
+    blocks = [
+        (pool.get(key), g.index.to_numpy(), g[metric].to_numpy(dtype=float), g["implied_value"].to_numpy(dtype=float))
+        for key, g in scored.groupby(["season", "pos"])
+    ]
+    keys = scored[["season", "expert"]]
+
+    per_boot = []
+    for _ in range(n_boot):
+        hit = np.full(len(scored), np.nan)
+        pos_of = {idx: i for i, idx in enumerate(scored.index)}
+        for values, idx, realized, implied in blocks:
+            if values is None or len(values) < 2:
+                continue
+            sample = np.sort(rng.choice(values, size=len(values), replace=True))[::-1]
+            cuts = np.sort(_tier_cuts(sample, max_tiers))
+            if len(cuts) == 0:
+                continue
+            # searchsorted gives each value's tier index under the resampled breaks; equality
+            # of the two indices is exactly "landed in the tier the slot implied".
+            same = np.searchsorted(cuts, realized, side="right") == np.searchsorted(cuts, implied, side="right")
+            hit[[pos_of[i] for i in idx]] = same.astype(float)
+        per_boot.append(pd.Series(hit, index=scored.index).groupby([keys["season"], keys["expert"]]).mean())
+
+    draws = pd.concat(per_boot, axis=1)
+    out = pd.DataFrame(
+        {
+            "tier_stability_lo": draws.quantile(alpha / 2, axis=1),
+            "tier_stability_hi": draws.quantile(1 - alpha / 2, axis=1),
+        }
+    ).reset_index()
+    return out
+
+
 def expert_scorecard(
     joined: pd.DataFrame,
     outcomes: pd.DataFrame,
     experts: Optional[List[str]] = None,
     min_games: int = MIN_GAMES_FOR_PPG,
+    metric: str = "ppg_half",
+    n_boot: int = 300,
+    seed: int = 0,
 ) -> pd.DataFrame:
     """One row per (season, expert): accuracy in all three spaces, on two player sets.
 
@@ -178,6 +305,7 @@ def expert_scorecard(
     only 98 players in 2025, so including him collapses the intersection for everyone else.
     """
     rows: List[Dict] = []
+    rng = np.random.default_rng(seed)
 
     for season, season_block in joined.groupby("season"):
         scored = season_block[season_block["pos_rank"].notna() & season_block["pos_finish_rank_in_set"].notna()]
@@ -193,6 +321,7 @@ def expert_scorecard(
 
             spearman_total = _spearman(block["pos_rank"], block["pos_finish_rank_in_set"])
             spearman_ppg = _spearman(played_full["pos_rank"], played_full["pos_finish_rank_in_set"])
+            lo, hi = _spearman_ci(comp["pos_rank"], comp["pos_finish_rank_in_set"], n_boot, rng)
             rows.append(
                 {
                     "season": season,
@@ -205,6 +334,8 @@ def expert_scorecard(
                     # rank space
                     "spearman_full": spearman_total,
                     "spearman_common": _spearman(comp["pos_rank"], comp["pos_finish_rank_in_set"]),
+                    "spearman_common_lo": lo,
+                    "spearman_common_hi": hi,
                     "spearman_ppg": spearman_ppg,
                     "mae_rank": block["rank_error"].abs().mean(),
                     "mae_rank_common": comp["rank_error"].abs().mean(),
@@ -212,8 +343,13 @@ def expert_scorecard(
                     "mae_points": block["points_error"].abs().mean(),
                     "mae_points_common": comp["points_error"].abs().mean(),
                     "bias_points": block["points_error"].mean(),
-                    # tier space
+                    # tier space. `tier_edge_median` is the median distance from a scored
+                    # player to the nearest tier break, in metric units — a small value means
+                    # this expert's tier hits are resting on an arbitrary line.
                     "tier_hit_rate": block["tier_hit"].mean(),
+                    "tier_edge_median": (
+                        block["boundary_distance"].median() if "boundary_distance" in block.columns else float("nan")
+                    ),
                     # availability: how much better they look once injuries are removed
                     "availability_effect": (
                         spearman_ppg - spearman_total
@@ -225,6 +361,12 @@ def expert_scorecard(
             )
 
     out = pd.DataFrame(rows).drop(columns=["_ppg_common"])
+
+    scope = joined[joined["expert"].isin(experts)] if experts else joined
+    tier_ci = tier_hit_stability_range(scope, outcomes, metric=metric, n_boot=n_boot, seed=seed)
+    if not tier_ci.empty:
+        out = out.merge(tier_ci, on=["season", "expert"], how="left")
+
     return out.sort_values(["season", "spearman_common"], ascending=[True, False]).reset_index(drop=True)
 
 

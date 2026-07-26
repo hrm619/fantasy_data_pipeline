@@ -77,19 +77,38 @@ def _report(argv) -> int:
     # else; the rank_scope column records that their overall rank was never published.
     enriched = add_value_curve(joined, outcomes, metric=ns.metric)
 
+    def _display(card: pd.DataFrame) -> pd.DataFrame:
+        """Fold the bootstrap bounds into readable [lo, hi] strings.
+
+        The interval is shown NEXT TO the point estimate, never instead of it, because the
+        whole point is that the gaps between experts are smaller than their intervals.
+        """
+        out = card.copy()
+        for stat, lo, hi in (
+            ("spearman_common", "spearman_common_lo", "spearman_common_hi"),
+            ("tier_stability", "tier_stability_lo", "tier_stability_hi"),
+        ):
+            if lo in out.columns:
+                out[f"{stat}_95ci"] = [
+                    "n/a" if pd.isna(a) or pd.isna(b) else f"[{a:.2f}, {b:.2f}]" for a, b in zip(out[lo], out[hi])
+                ]
+        return out
+
     cols = [
         "season",
         "expert",
         "expert_kind",
         "n_ranked",
         "n_common",
-        "spearman_full",
         "spearman_common",
+        "spearman_common_95ci",
         "spearman_ppg",
         "availability_effect",
         "mae_rank_common",
         "mae_points_common",
         "tier_hit_rate",
+        "tier_stability_95ci",
+        "tier_edge_median",
     ]
 
     print("=" * 78)
@@ -97,17 +116,33 @@ def _report(argv) -> int:
     print("=" * 78)
     print("  *_common columns are the fair head-to-head: same players for every expert.")
     print("  mae_rank grows with how many players you rank, so only the common one compares.")
+    print("  spearman_common_95ci is a percentile bootstrap over players. Where two experts'")
+    print("  intervals overlap, the gap between their point estimates is not evidence.")
+    print("  tier_stability_95ci is NOT a CI — it is how far the hit rate moves when the tier")
+    print("  breaks are re-derived from a resample. The point estimate often falls outside it,")
+    print("  which is the finding: largest-gap segmentation is unstable, so prefer points space.")
+    print("  tier_edge_median = median distance to the nearest tier break, in metric units;")
+    print("  a small value means those tier hits rest on an arbitrary line.")
     print()
-    print(expert_scorecard(enriched, outcomes)[cols].round(3).to_string(index=False))
+    print(_display(expert_scorecard(enriched, outcomes, metric=ns.metric))[cols].round(3).to_string(index=False))
 
     # The cross-season set. Restricting the intersection to these gives a much larger common
     # subset than including a shallow board like Barrett's 99 players, which collapses it.
+    # hw joined this set once hw-2024.csv supplied his overall ranks — the snapshot had him
+    # positional-only, which is why the design doc lists him as a special case.
     overlap = ["fp", "pff", "ds", "hw", "adp"]
     print()
     print("=" * 78)
     print(f"EXPERT SCORECARD — cross-season overlap only ({', '.join(overlap)})")
     print("=" * 78)
-    print(expert_scorecard(enriched, outcomes, experts=overlap)[cols].round(3).to_string(index=False))
+    print("  2023 has only hw, so its 'common subset' is just hw's own board — not a")
+    print("  head-to-head. Read the 2023 row as a solo accuracy record.")
+    print()
+    print(
+        _display(expert_scorecard(enriched, outcomes, experts=overlap, metric=ns.metric))[cols]
+        .round(3)
+        .to_string(index=False)
+    )
 
     print()
     print("=" * 78)
@@ -118,23 +153,34 @@ def _report(argv) -> int:
     bias = bias_by_slice(enriched, by="pos")
     print(bias.round(3).to_string(index=False))
 
-    print()
-    print("=" * 78)
-    print("CONVICTION vs ADP  (top 20% of calls by VALUE of the disagreement)")
-    print("=" * 78)
-    calls = conviction_calls(enriched, outcomes, metric=ns.metric)
-    if calls.empty:
-        print("  (no scorable calls)")
-    else:
+    # Two markets, reported separately and never pooled. `adp` is redraft consensus ADP;
+    # `adp_underdog` is Underdog BEST-BALL ADP, which prices a different game (best-ball pays
+    # for weekly spikes and never starts anyone, so it bids up high-variance pass-catchers).
+    # They correlate 0.965 where both exist — close enough to be tempting, not close enough
+    # to be the same bet. 2024 carries both, so the gap can be measured rather than assumed.
+    for reference, label in (("adp", "consensus redraft ADP"), ("adp_underdog", "Underdog BEST-BALL ADP")):
+        calls = conviction_calls(enriched, outcomes, reference=reference, metric=ns.metric)
+        print()
+        print("=" * 78)
+        print(f"CONVICTION vs {reference.upper()}  ({label})")
+        print("=" * 78)
+        if calls.empty:
+            print("  (no scorable calls)")
+            continue
+        seasons = ", ".join(str(s) for s in sorted(calls["season"].unique()))
+        print(f"  Top 20% of calls by VALUE of the disagreement. Seasons covered: {seasons}.")
+        print("  NOT comparable to the other market's block — different game, different prices.")
+        print()
         print(conviction_summary(calls, by=["expert"]).round(3).to_string(index=False))
         print()
         print("-- by expert x position --")
         print(conviction_summary(calls, by=["expert", "pos"]).round(3).to_string(index=False))
 
     print()
-    print("⚠️  Two seasons, ~200 players, three experts with comparable overall ranks in both.")
-    print("   Differences this small are directional, not conclusive. Rows marked")
-    print("   sufficient=False are below the minimum cell size — read them as anecdotes.")
+    print("⚠️  Three seasons, ~250 players each, four experts with comparable overall ranks")
+    print("   in 2024-2025 (2023 is hw only). Differences this small are directional, not")
+    print("   conclusive — check whether the 95% CIs overlap before believing an ordering.")
+    print("   Rows marked sufficient=False are below the minimum cell size: anecdotes.")
     return 0
 
 
