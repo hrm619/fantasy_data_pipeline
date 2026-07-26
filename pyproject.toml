@@ -56,10 +56,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/henrymarsh/fantasy_data_pipeline"
-Documentation = "https://github.com/henrymarsh/fantasy_data_pipeline/tree/main/docs"
-Repository = "https://github.com/henrymarsh/fantasy_data_pipeline"
-Issues = "https://github.com/henrymarsh/fantasy_data_pipeline/issues"
+Homepage = "https://github.com/hrm619/fantasy_data_pipeline"
+Documentation = "https://github.com/hrm619/fantasy_data_pipeline/tree/main/docs"
+Repository = "https://github.com/hrm619/fantasy_data_pipeline"
+Issues = "https://github.com/hrm619/fantasy_data_pipeline/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

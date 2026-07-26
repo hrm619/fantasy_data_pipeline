@@ -1,5 +1,12 @@
 # Fantasy Football Data Pipeline
 
+The source-adapter layer in [quant-edge](https://github.com/hrm619/quant-edge), a local
+fantasy-football research system: fetches and consolidates rankings from multiple sources.
+`fantasy-data` imports `RankingsProcessor` from this repo (editable local dependency) to seed its
+own tables. (`ff-expert-analysis` still writes directly into `~/.fantasy-data/fantasy_data.db`
+today — see ARCHITECTURE_REVIEW.md's G3/Phase 3.1 for the plan to move that write into
+`fantasy-data` so this repo holds no durable state of its own.)
+
 A comprehensive Python pipeline for processing fantasy football rankings data from multiple sources, calculating advanced metrics like Value-Based Drafting (VBD), and managing data workflows.
 
 ## Features
