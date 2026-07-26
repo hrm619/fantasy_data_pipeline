@@ -6,9 +6,14 @@ snapshot and writes its own tables.
 
 ```bash
 uv run ff-expert-analysis build            # adapters -> ~/.fantasy-data/fantasy_data.db
-uv run ff-expert-analysis report           # scorecard, bias, conviction
+uv run ff-expert-analysis report           # scorecard, tiers, bias, conviction
 uv run ff-expert-analysis report --metric fpts_half --season 2024
+uv run ff-expert-analysis report --min-games 12    # sensitivity: it barely moves, see §8
 ```
+
+**Three columns carry health warnings and are the ones people misread.** `hit_rate` must be read as
+`hit_rate_vs_pool` (§4), positional bias must be read as `mean_vor_error_vs_ref` (§3b-bis), and
+`tier_stability_95ci` is a stability range, not a confidence interval (§3c).
 
 Code: `src/fantasy_pipeline/analysis/{historical,scorecard}.py`, tests in
 `tests/test_expert_analysis.py`.
@@ -55,6 +60,11 @@ Every file gets its own adapter. Supplemental boards **override** the snapshot f
 **`fp`, `pff`, `ds` and `hw` have comparable overall ranks in 2024 and 2025.** `hw` joined that set
 once `hw-2024.csv` supplied his overall ranks — the snapshot carried him positionally only
 (`"RB1"`). **2023 is `hw` alone**, so it is a solo accuracy record, not a head-to-head.
+
+These counts are rows **loaded**. The scorecard reports `n_ranked`, which is rows that also join to a
+realized outcome, so it is slightly lower — `pff` 2025 loads 448 and scores 426; `hw` loads 253/273
+for 2023/2024 and scores 248/271. The gap is players with no PFR outcome row (no NFL snap that
+season), not a matching failure.
 
 Excluded by decision: personal/league-mate columns (`HankRank`, `My Rank`, `TARGET`, and the
 `SCOTT`/`RYAN`/`JJ`/`HAYDEN`/`JOSH` columns, which exported as 262 rows of `#NAME?` anyway).
@@ -154,9 +164,18 @@ This is the mispricing in **PPG**, and it makes "spiritually correct" fall out a
 arbitrary tier boundaries: where the curve is flat, a large rank miss costs almost nothing; where it
 is steep, a small rank miss is expensive.
 
-Because ranks are a permutation over a fixed set of slots, the assigned `curve` values are the same
-multiset for every expert who ranked the same players — so the aggregate is a fair comparison (it is
-an assignment cost, not a free parameter).
+**The curve must be priced IN-SET, and this is the single easiest way to get a wrong answer here.**
+The league-wide curve indexes a ~620-player outcome universe while `r` is a rank within a ~250-player
+board. The r-th best of a superset beats the r-th best of the subset, so the signed error came out
+negative for every expert, in every position, in every season — including the markets — and its
+*magnitude tracked board depth*. PFF's 2025 board (426 scorable vs ~240 for everyone else) read as
+the least biased at WR purely for reaching further down the curve. This is the same defect
+`pos_finish_rank_in_set` fixes in rank space (§7); points space did not get the equivalent treatment
+until later. `add_in_set_curves` now prices each board against itself, so `mae_points` is
+depth-invariant. Pinned by `test_in_set_pricing_is_invariant_to_board_coverage`.
+
+Once priced in-set the assigned `curve` values are a permutation of the group's own outcomes, which
+makes the aggregate an assignment cost rather than a free parameter — and has a consequence, below.
 
 **The diagnostic that explains the gap:** report the **local slope** of the curve — PPG per rank at
 each point. That is exactly the quantity that makes rank error and points error diverge, and it turns
@@ -166,6 +185,32 @@ each point. That is exactly the quantity that makes rank error and points error 
 QB and elite for an RB. Any analysis that mixes positions (i.e. anything keyed on *overall* rank)
 must first convert to **value over replacement**, using the pipeline's documented baselines (QB 6,
 RB 24, WR 30, TE 12). Positional analyses can use raw PPG.
+
+### 3b-bis. Bias has to be measured ACROSS positions, not within one
+
+Within a position, an in-set curve makes the signed points error **exactly zero by construction** —
+the expert's ranks and the realized ranks are permutations of the same set, so the assigned and
+realized multisets are identical. That is the same degeneracy §7 records for signed *rank* error, and
+it kills the design's original escape hatch: signed points error does **not** "carry the answer".
+Both are zero. The version that appeared non-zero was measuring board depth, per above.
+
+So signed bias lives on the **overall** board, in **VOR** (`positional_bias`). There the permutation
+constraint binds at board level rather than within a position, so the total is zero while the
+per-position means are free to move — an expert who spends early overall slots on RBs runs negative
+on RB and positive elsewhere. Two corrections are needed before it means anything:
+
+1. **Difference against a reference.** Every expert *and* every market carries the same large shared
+   offset (TE ≈ +50, QB ≈ −40 on the 2024–25 boards) because the VOR baselines interact with how deep
+   each position is drafted. That is the replacement levels talking, not judgement.
+2. **Then centre within (season, expert).** Each board's VOR error sums to zero over *its own*
+   players, so when two boards differ in size the two zero-sums are taken over different populations
+   and the raw difference inherits a global offset that tracks board size: 2024 `ds` (146 players)
+   came out **+18.96 across every position** and `ringer` (144) **+20.14**, while `fp` and `pff` — both
+   214, exactly `adp`'s size — came out at **0.00**. Arithmetic, not judgement. Centring leaves a tilt
+   summing to ~zero across positions, which is the only question the comparison can answer: *which
+   positions did this expert favour relative to the market.*
+
+Read `mean_vor_error_vs_ref`, never the raw column.
 
 ### 3c. Tier space — the human-readable question
 
@@ -190,9 +235,13 @@ relocates the breaks wholesale — 2024 RB cuts sit at 12.2–20.5 on the real d
 5.9–9.2 under resampling. Deduplicating first does not help (tied values have zero gaps and are
 never chosen as breaks).
 
-**Practical consequence: prefer points space (§3b) for anything load-bearing.** It needs no
-boundaries, so it cannot inherit this instability. Tier hit-rate stays because it is readable, not
-because it is reliable.
+**Practical consequence: tier space is now a PRESENTATION layer, not a result.** It needs boundaries
+and the boundaries do not survive resampling, so it prints in its own labelled block rather than
+beside the accuracy metrics, where a readable-but-unreliable number could be mistaken for a
+load-bearing one. Points space (§3b) needs no boundaries and cannot inherit this — use it for
+anything that carries weight. Trying 1-D k-means or Fisher–Jenks was considered and dropped: it would
+change *which* arbitrary boundaries are used without making tier membership less knife-edge, and the
+`tier_edge_median` column already exposes how close to a line each expert's hits sit.
 
 ### 3d. Availability — run everything twice
 
@@ -224,11 +273,42 @@ value_added = actual_value(p) - curve[adp_rank]         # vs what the market imp
 correct     = sign(value_added) == sign(delta_rank)     # right direction, not just right magnitude
 ```
 
-Reported as conviction hit-rate and mean value added per call, sliced by **expert × position ×
-draft region** (rounds 1-3 / 4-8 / 9+), in value-over-replacement units so positions are comparable.
+Reported as conviction hit-rate and mean value added per call, sliced by **expert**, **expert ×
+position**, and **expert × draft region** (rounds 1-3 / 4-8 / 9+). Three references are reported:
+`adp`, `adp_underdog`, and **`fp`** — "diverging from the expert consensus" and "diverging from the
+market" are different bets, and only one of them is a price.
 
-Also worth running against `fp` (the consensus) as the reference instead of `adp`, since "diverging
-from the expert consensus" and "diverging from the market" are different bets.
+**Everything is priced on the set both boards ranked.** Against the league-wide curve `value_added`
+was systematically negative (same defect as §3b), which tilts `sign(value_added)` toward "the expert
+was right to fade him" no matter who the expert is. Re-ranking both sides within the common set and
+pricing off that set's own curve makes `value_added` average **exactly zero** over all calls, so the
+sign test is a fair coin. Re-ranking is also what makes two boards of different depths commensurable
+at all. Pinned by `test_value_added_is_centred_on_the_common_set`.
+
+**Draft region is read from the reference's OVERALL rank.** `DRAFT_REGIONS` is defined in overall-pick
+terms (rounds 1-3 = picks 1-36); it was being fed a *positional* rank, which put every position's top
+36 in "rounds 1-3" — TE36 is not a third-round pick.
+
+### Do not compare conviction hit-rate to 0.5
+
+The sign test gets **mechanically easier as the disagreement grows**. Pooled across every expert, hit
+rate climbs monotonically with `|delta_value|`:
+
+| `|delta_value|` quantile | 0.00–0.50 | 0.50–0.80 | 0.80–0.95 | 0.95–1.00 |
+|---|---|---|---|---|
+| hit rate | 0.380 | 0.528 | 0.615 | 0.750 |
+
+Selecting the top 20% by construction lands *everyone* well above a coin flip — an expert at 0.68 has
+done nothing but make big calls. `hit_rate_vs_pool` differences against the pooled rate over the same
+selected set, which removes the gradient and leaves the part that is about the expert. It sums to
+~zero across experts by construction. **Read that column, not `hit_rate`.**
+
+**The pool is computed within each non-expert slice level**, because the gradient recurs one level
+down: late-round calls hit far more often than early ones (`rounds 9+` runs ~0.63–0.91 against
+`rounds 1-3`'s ~0.23–0.73). A single global pool would put every expert's `rounds 9+` cell above its
+`rounds 1-3` cell and read as "everyone is better late", which is a property of the region, not of
+anyone. Comparing experts is only meaningful *inside* a slice — and the tables sort on
+`hit_rate_vs_pool` for the same reason.
 
 ---
 
@@ -245,8 +325,12 @@ manufactures confident nonsense.
   "Best at late-round WRs" may be 5–10 players. Cells below a floor (n ≥ 10) report as *insufficient*
   rather than as a number.
 - **Multiple comparisons.** ~4 comparable experts × 4 positions × 3 regions ≈ 48 cells; at α = 0.05
-  roughly two will look "significant" by chance. Results are **hypothesis-generating**, reported with
-  confidence intervals rather than bare p-values, with FDR control where testing is formalised.
+  roughly two will look "significant" by chance. Results are **hypothesis-generating** and are
+  reported with intervals rather than p-values. There is deliberately **no formal testing and no FDR
+  control**: with three seasons and intervals that already overlap completely (below), a p-value
+  would add ceremony rather than information, and formalising the testing would invite exactly the
+  "which cell is significant" reading this section exists to prevent. Removed as a stated goal rather
+  than left as an unbuilt promise.
 - **Sample size, plainly.** Three seasons, ~250 players each, four comparable experts in 2024–2025
   and one in 2023. Spearman differences below ~0.05 are indistinguishable from noise. This can rank
   experts *directionally* and surface patterns worth watching. It cannot establish that one expert is
@@ -257,8 +341,10 @@ manufactures confident nonsense.
   and that ordering is noise. Read the intervals before believing any ranking; where they overlap,
   the gap between point estimates is not evidence.
 - **Post-hoc tiers.** See §3c.
-- **Survivorship.** Players ranked but who never played, and the missing PFF #1, are documented
-  exclusions, not silent drops.
+- **Board depth is not skill.** Any metric that prices one board against a curve indexed on a
+  different set will rank the deepest board best. See §3b — this had actually happened.
+- **Survivorship.** Players ranked but who never played are documented exclusions, not silent drops.
+  (PFF's missing #1 was in this list until the original export was recovered; see §1.)
 
 The single highest-value improvement is **more seasons**, not more metrics. The schema is built so
 adding one is an adapter plus a load.
@@ -273,7 +359,8 @@ adding one is an adapter plus a load.
 3. Load to SQLite (drop-and-recreate) + the join view.
 4. Scorecard module: §3 metrics with coverage and CIs.
 5. Conviction analysis: §4.
-6. Notebook / report.
+6. Report — `ff-expert-analysis report`. (There is no notebook and none is planned; the CLI report is
+   the deliverable. `--season`, `--metric` and `--min-games` cover the slicing a notebook would.)
 
 ## 7. Things the build discovered
 
@@ -294,7 +381,12 @@ Two design corrections followed from it:
 
 - **No signed rank error by position.** Within a position the expert's ranks and the realized ranks are
   permutations of the same set, so the signed mean is *exactly zero by construction* — it would have
-  read as "no bias" for every expert. Signed **points** error carries the answer instead.
+  read as "no bias" for every expert. ~~Signed **points** error carries the answer instead.~~
+  **That second half was wrong**, and stayed wrong for a while because it produced plausible numbers:
+  signed points error is zero by construction too, for exactly the same reason, once the curve is
+  priced in-set. The non-zero values it was printing came from pricing a ~250-player board against a
+  ~620-player league curve and were a measure of board depth. Signed bias moved to the overall board
+  in VOR — see §3b-bis, which also covers the two corrections it needs.
 - **Positional ranks are derived from overall ranks**, not read from the published columns. Most
   experts publish an overall board only, and the published positional columns are not dependable —
   the 2025 snapshot's `POS ECR` is all 1s. A published positional rank is used only where the expert
@@ -323,15 +415,26 @@ Two design corrections followed from it:
 
 ## 8. Open questions
 
-- Games-played floor for PPG: 8 is a placeholder; sensitivity check it.
+- ~~Games-played floor for PPG: 8 is a placeholder; sensitivity check it.~~ **Answered: it is not
+  load-bearing.** Swept 1/4/6/8/10/12/14. `spearman_ppg` moves at most **0.045** across floors 4–12 —
+  inside the ~0.05 noise band §5 already documents — and the only ordering changes are swaps between
+  pairs whose intervals overlap completely (2024 `fp`/`pff`, 2025 `adp`/`hw`). 8 stays as the default
+  and is now exposed as `--min-games` so the check is repeatable rather than a buried assumption.
 - ~~Tier segmentation method — pick by stability under bootstrap.~~ **Answered, badly:** largest-gap
-  is *not* stable (§3c). The open question is now whether 1-D k-means or Fisher–Jenks is materially
-  better, or whether tier space should be demoted to a presentation layer over §3b.
+  is *not* stable (§3c). **Resolved by demotion**: tier space is a presentation layer, printed in its
+  own block, and nothing load-bearing reads it. k-means/Fisher–Jenks was dropped as a non-fix — it
+  changes which arbitrary boundaries are used without making membership less knife-edge.
 - ~~Should `hw` 2024 (positional-only) be included in positional analyses?~~ **Resolved** —
   `hw-2024.csv` supplies overall ranks, so `hw` is now scored exactly like every other expert in all
   three seasons and needs no special case.
 - ~~Is a third season available?~~ **2023 is in**, via `hw-2023.csv`. But it is **one expert**, so it
   strengthens HW's individual record and adds a third value curve without enabling any new
   head-to-head. A 2023 board for `fp`/`pff`/`ds` would be worth more than anything else on this list.
-- Does `adp_underdog` belong in the cross-season overlap set? It has 2023+2024 but no 2025, which is
-  the mirror image of `adp`'s 2024+2025 — neither market spans all three seasons.
+- ~~Does `adp_underdog` belong in the cross-season overlap set?~~ **Resolved: no, and neither does
+  forcing the question.** It has 2023+2024, `adp` has 2024+2025 — neither market spans all three
+  seasons, so admitting either shrinks the overlap for a series that is not an expert opinion anyway.
+  The overlap set stays `fp, pff, ds, hw, adp` and each market is reported beside it in its own
+  conviction block, which is where the market comparison actually belongs.
+- **Still the highest-value item: a 2023 board for `fp`/`pff`/`ds`.** It is what converts 2023 from a
+  solo record into a third head-to-head, and it is data acquisition rather than code. Worth checking
+  `data/rankings current/raw archive/` the way `pff-2025` was recovered.

@@ -105,12 +105,84 @@ def assign_tiers(outcomes: pd.DataFrame, metric: str = "ppg_half", max_tiers: in
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def _in_set_curve(frame: pd.DataFrame, value_col: str, rank_col: str) -> pd.Series:
+    """Assign each row the value its slot implied, pricing against THIS set only.
+
+    The curve is the group's own realized values sorted descending; a row ranked r-th gets
+    the r-th best outcome in the group. Ranks are re-densified (`method="first"`) so gaps and
+    ties in the published board can't index off the end of the curve.
+
+    Returns a Series over the scorable rows only — callers align it back by index.
+    """
+    ok = frame[value_col].notna() & frame[rank_col].notna()
+    sub = frame[ok]
+    if sub.empty:
+        return pd.Series(dtype=float)
+    curve = np.sort(sub[value_col].to_numpy(dtype=float))[::-1]
+    slot = sub[rank_col].rank(method="first").astype(int).to_numpy()
+    return pd.Series(curve[slot - 1], index=sub.index)
+
+
+def add_in_set_curves(joined: pd.DataFrame, metric: str = "ppg_half") -> pd.DataFrame:
+    """Price every board against ITSELF, positionally and overall.
+
+    The league-wide curve (`realized_value_curve`) prices a ~250-player board against a
+    ~620-player outcome universe, so `curve[r]` is the r-th best of everybody while `r` is a
+    rank among a much smaller set. The r-th best of a superset beats the r-th best of the
+    subset, so the resulting signed error is negative for every expert in every position —
+    and its magnitude tracks BOARD DEPTH, not bias. PFF's 2025 board (426 scorable vs ~240
+    for everyone else) reads as the least biased at WR purely for reaching deeper into the
+    curve. This is the same defect `pos_finish_rank_in_set` fixes in rank space; points space
+    never got the equivalent treatment.
+
+    Two curves are attached, and the difference between them is the whole point:
+
+    * `implied_value_in_set` / `points_error_in_set` — per (season, expert, pos). Correct for
+      MAGNITUDE (`mae`), but its signed mean is **exactly zero by construction**: within a
+      position the expert's ranks and the realized ranks are permutations of the same set.
+      That is why `bias_by_slice` no longer reports a signed positional points error, and why
+      the design doc's claim that signed points error "carries the answer" where signed rank
+      error cannot was wrong — both are degenerate in exactly the same way.
+    * `implied_vor` / `vor_error` — per (season, expert), on the OVERALL board in
+      value-over-replacement units. Here the permutation constraint binds at board level
+      rather than within a position, so the total is zero while the per-position means are
+      free to move. That is the real bias signal: an expert who spends top overall slots on
+      RBs runs negative on RB and positive elsewhere. VOR (not PPG) because anything keyed on
+      overall rank mixes positions, and 18 PPG is replaceable for a QB and elite for an RB.
+    """
+    df = joined.copy()
+
+    def _attach(keys: List[str], value_col: str, rank_col: str, out_col: str) -> None:
+        # An explicit loop rather than groupby.apply: apply re-keys the result to a MultiIndex
+        # when a group returns a shorter Series (which happens whenever a group has unscorable
+        # rows), and the assignment back would silently misalign.
+        df[out_col] = np.nan
+        if df.empty or value_col not in df.columns or rank_col not in df.columns:
+            return
+        for _, group in df.groupby(keys, sort=False):
+            priced = _in_set_curve(group, value_col, rank_col)
+            if len(priced):
+                df.loc[priced.index, out_col] = priced.to_numpy(dtype=float)
+
+    _attach(["season", "expert", "pos"], metric, "pos_rank", "implied_value_in_set")
+    df["points_error_in_set"] = df[metric] - df["implied_value_in_set"]
+
+    _attach(["season", "expert"], "value_over_replacement", "overall_rank", "implied_vor")
+    df["vor_error"] = (
+        df["value_over_replacement"] - df["implied_vor"] if "value_over_replacement" in df.columns else np.nan
+    )
+    return df
+
+
 def add_value_curve(joined: pd.DataFrame, outcomes: pd.DataFrame, metric: str = "ppg_half") -> pd.DataFrame:
     """Attach, per ranked player: the value their slot implied, and the error against it.
 
-    `implied_value` is `curve[expert's positional rank]`. `points_error` is what the player
-    actually produced minus that — the mispricing in metric units. Positive means the player
-    beat the slot he was put in.
+    `implied_value` is `curve[expert's positional rank]` against the LEAGUE-WIDE outcome
+    curve, and `points_error` is the mispricing against it. Both are retained because the
+    league curve is the right reference for "what was available at this slot in the whole
+    population" — but neither is safe to average signed, because the expert's rank and the
+    curve's index are on different scales. See `add_in_set_curves`, which is applied here and
+    supplies the depth-invariant versions the scorecard actually reports.
     """
     curve = realized_value_curve(outcomes, metric=metric)
     tiers = assign_tiers(outcomes, metric=metric)
@@ -147,7 +219,7 @@ def add_value_curve(joined: pd.DataFrame, outcomes: pd.DataFrame, metric: str = 
     df["tier_hit"] = (df["implied_tier"] == df["realized_tier"]).where(
         df["implied_tier"].notna() & df["realized_tier"].notna()
     )
-    return df
+    return add_in_set_curves(df, metric=metric)
 
 
 def _spearman(a: pd.Series, b: pd.Series) -> float:
@@ -339,10 +411,17 @@ def expert_scorecard(
                     "spearman_ppg": spearman_ppg,
                     "mae_rank": block["rank_error"].abs().mean(),
                     "mae_rank_common": comp["rank_error"].abs().mean(),
-                    # points space — the "spiritually correct" view
-                    "mae_points": block["points_error"].abs().mean(),
-                    "mae_points_common": comp["points_error"].abs().mean(),
-                    "bias_points": block["points_error"].mean(),
+                    # Points space — the "spiritually correct" view. Priced IN-SET, so it is
+                    # not moved by how deep the board goes. There is deliberately no signed
+                    # counterpart: within a position it is zero by construction, so bias is
+                    # reported cross-positionally in VOR by `positional_bias` instead.
+                    "mae_points": block["points_error_in_set"].abs().mean(),
+                    "mae_points_common": comp["points_error_in_set"].abs().mean(),
+                    # How steep the curve is where this expert was working — the quantity that
+                    # makes rank error and points error diverge. A flat curve means a large
+                    # rank miss cost almost nothing ("spiritually correct"); a steep one means
+                    # a small miss was expensive.
+                    "median_curve_slope": block["curve_slope"].median(),
                     # tier space. `tier_edge_median` is the median distance from a scored
                     # player to the nearest tier break, in metric units — a small value means
                     # this expert's tier hits are resting on an arbitrary line.
@@ -371,17 +450,18 @@ def expert_scorecard(
 
 
 def bias_by_slice(joined: pd.DataFrame, by: str = "pos", min_cell: int = MIN_CELL_SIZE) -> pd.DataFrame:
-    """Error per (season, expert, slice), for detecting systematic lean.
+    """Error MAGNITUDE per (season, expert, slice). Signed bias lives in `positional_bias`.
 
-    Note there is deliberately no signed RANK error here: within a position, the expert's ranks
-    and the realized ranks are permutations of the same set, so the signed mean is exactly zero
-    by construction and would read as "no bias" for everyone. Signed **points** error is the
-    one that carries the answer — it compares each slot against what that slot actually
-    returned, and is free to be non-zero.
+    There is deliberately no signed error column here, in either space. Within a position the
+    expert's ranks and the realized ranks are permutations of the same set, so a signed mean
+    is exactly zero by construction — that is true of signed RANK error, and (contrary to the
+    design doc's original claim) equally true of signed POINTS error once the curve is priced
+    in-set. The version that appeared non-zero was measuring the offset between a ~250-player
+    board and a ~620-player league curve, i.e. board depth. See `add_in_set_curves`.
 
-    `mean_points_error` is in the metric's units for that position, so it compares cleanly
-    ACROSS EXPERTS within a position. Comparing across positions needs care: 1 PPG means more
-    to a TE than to a QB. `mean_implied_value` is included so the scale is visible.
+    Magnitudes are still informative and are what this reports. `mae_points_in_set` is in the
+    metric's units for that position, so it compares across experts within a position;
+    comparing across positions needs care, since 1 PPG means more to a TE than to a QB.
 
     Cells below `min_cell` are flagged `sufficient=False` rather than dropped, so a thin slice
     is visibly thin instead of quietly absent.
@@ -390,12 +470,76 @@ def bias_by_slice(joined: pd.DataFrame, by: str = "pos", min_cell: int = MIN_CEL
     out = grouped.agg(
         n=("player_id", "size"),
         mae_rank=("rank_error", lambda s: s.abs().mean()),
-        mean_points_error=("points_error", "mean"),
-        mean_implied_value=("implied_value", "mean"),
+        mae_points_in_set=("points_error_in_set", lambda s: s.abs().mean()),
         tier_hit_rate=("tier_hit", "mean"),
     ).reset_index()
     out["sufficient"] = out["n"] >= min_cell
     return out
+
+
+def positional_bias(
+    joined: pd.DataFrame,
+    reference: str = "adp",
+    min_cell: int = MIN_CELL_SIZE,
+) -> pd.DataFrame:
+    """Signed cross-positional bias, in VOR, net of a reference series.
+
+    `mean_vor_error` is the expert's own signed VOR error per position (see
+    `add_in_set_curves`): positive means that position returned more than the overall slots
+    this expert spent on it. It sums to ~zero ACROSS positions, not within one, which is what
+    makes it a usable bias signal where the positional points error is degenerate.
+
+    **Read the `_vs_ref` column, not the raw one.** Every expert AND every market carries the
+    same large shared offset — TE ≈ +50, QB ≈ −40 on the 2024-25 boards — because the VOR
+    baselines (QB 6, TE 12) interact with how deep each position is drafted. That is a
+    property of the replacement levels, not of anyone's judgement, and differencing against a
+    reference cancels it. The difference is taken per player on the set the expert and the
+    reference BOTH ranked, so coverage cannot move it through the player mix either.
+
+    It is then **centred within (season, expert)**, which is load-bearing and not cosmetic.
+    Each board's `vor_error` sums to zero over ITS OWN players, so when two boards differ in
+    size the two zero-sums are taken over different populations and the raw difference
+    inherits a global per-expert offset that tracks board size — 2024 `ds` (146 players) came
+    out +18.96 and `ringer` (144) +20.14 across *every* position, while `fp` and `pff` (214,
+    the same size as `adp`) came out at exactly 0.00. That is arithmetic, not judgement.
+    Centring removes it, leaving a tilt that sums to ~zero across positions: the question
+    "which positions did this expert favour relative to the market", which is the only thing
+    the comparison can answer.
+
+    Cells below `min_cell` are flagged rather than dropped.
+    """
+    needed = {"vor_error", "expert", "season", "pos", "player_id"}
+    if not needed.issubset(joined.columns) or joined.empty:
+        return pd.DataFrame(
+            columns=pd.Index(["season", "expert", "pos", "n", "mean_vor_error", "mean_vor_error_vs_ref", "sufficient"])
+        )
+
+    scored = joined[joined["vor_error"].notna()]
+    out = (
+        scored.groupby(["season", "expert", "pos"])
+        .agg(n=("player_id", "size"), mean_vor_error=("vor_error", "mean"))
+        .reset_index()
+    )
+
+    ref = scored[scored["expert"] == reference][["season", "player_id", "vor_error"]].rename(
+        columns={"vor_error": "ref_vor_error"}
+    )
+    paired = scored[scored["expert"] != reference].merge(ref, on=["season", "player_id"], how="inner")
+    if paired.empty:
+        out["mean_vor_error_vs_ref"] = np.nan
+        out["n_vs_ref"] = 0
+    else:
+        raw_diff = paired["vor_error"] - paired["ref_vor_error"]
+        paired["vor_error_vs_ref"] = raw_diff - raw_diff.groupby([paired["season"], paired["expert"]]).transform("mean")
+        rel = (
+            paired.groupby(["season", "expert", "pos"])
+            .agg(n_vs_ref=("player_id", "size"), mean_vor_error_vs_ref=("vor_error_vs_ref", "mean"))
+            .reset_index()
+        )
+        out = out.merge(rel, on=["season", "expert", "pos"], how="left")
+
+    out["sufficient"] = out["n"] >= min_cell
+    return out.sort_values(["season", "expert", "pos"]).reset_index(drop=True)
 
 
 def draft_region(overall_rank: float) -> Optional[str]:
@@ -423,17 +567,52 @@ def conviction_calls(
 
     `value_added` is the player's realized value minus what the reference's slot implied, so a
     call is `correct` when the expert leaned the direction the outcome went.
+
+    **Everything is priced against one curve, built on the players the expert and the
+    reference BOTH ranked.** Pricing against the league-wide curve made `value_added`
+    systematically negative — the r-th best of a ~620-player universe beats the r-th best of a
+    ~250-player board — which tilts `sign(value_added)` toward "the expert was right to fade
+    him" no matter who the expert is. On the common set both ranks are permutations of the
+    same slots, so `value_added` averages to zero by construction and the sign test is a fair
+    coin. Re-ranking within the common set is also what makes the two boards commensurable at
+    all: raw positional ranks come from boards of different depths.
     """
-    ref = joined[joined["expert"] == reference][["season", "player_id", "pos_rank", "implied_value"]].rename(
-        columns={"pos_rank": "ref_pos_rank", "implied_value": "ref_implied_value"}
+    ref = joined[joined["expert"] == reference][["season", "player_id", "pos_rank", "overall_rank"]].rename(
+        columns={"pos_rank": "ref_pos_rank_raw", "overall_rank": "ref_overall_rank"}
     )
     df = joined[joined["expert"] != reference].merge(ref, on=["season", "player_id"], how="inner")
+    df = df[df["pos_rank"].notna() & df["ref_pos_rank_raw"].notna() & df[metric].notna()].copy()
+    if df.empty:
+        return df.assign(delta_rank=None, delta_value=None, value_added=None, correct=None, is_big_call=None)
 
-    df["delta_rank"] = df["ref_pos_rank"] - df["pos_rank"]  # positive = expert higher than market
-    df["delta_value"] = df["implied_value"] - df["ref_implied_value"]
+    # Re-rank both sides within the common set, then price both off that set's own curve.
+    keys = ["season", "expert", "pos"]
+    df["exp_slot"] = df.groupby(keys)["pos_rank"].rank(method="first")
+    df["ref_slot"] = df.groupby(keys)["ref_pos_rank_raw"].rank(method="first")
+    # The common set's own realized values, descending: slot r is priced at the r-th best.
+    ordered = {k: np.sort(g[metric].to_numpy(dtype=float))[::-1] for k, g in df.groupby(keys, sort=False)}
+
+    def _lookup(col: str) -> np.ndarray:
+        vals = np.full(len(df), np.nan)
+        for k, g in df.groupby(keys, sort=False):
+            arr = ordered[k]
+            slots = g[col].astype(int).to_numpy()
+            ok = (slots >= 1) & (slots <= len(arr))
+            pos_in_df = df.index.get_indexer(g.index[ok])
+            vals[pos_in_df] = arr[slots[ok] - 1]
+        return vals
+
+    df["implied_value_common"] = _lookup("exp_slot")
+    df["ref_implied_value"] = _lookup("ref_slot")
+
+    df["delta_rank"] = df["ref_slot"] - df["exp_slot"]  # positive = expert higher than market
+    df["delta_value"] = df["implied_value_common"] - df["ref_implied_value"]
     df["value_added"] = df[metric] - df["ref_implied_value"]
     df["correct"] = np.sign(df["value_added"]) == np.sign(df["delta_rank"])
-    df["region"] = df["ref_pos_rank"].map(draft_region)
+    # Draft region is defined in OVERALL-pick terms (rounds 1-3 = picks 1-36), so it must be
+    # read off the reference's overall rank. Mapping a POSITIONAL rank through those cutoffs
+    # put every position's top 36 in "rounds 1-3" — TE36 is not a third-round pick.
+    df["region"] = df["ref_overall_rank"].map(draft_region)
 
     scored = df[df["delta_value"].notna() & df[metric].notna()].copy()
     if scored.empty:
@@ -466,5 +645,31 @@ def conviction_summary(calls: pd.DataFrame, by: Optional[List[str]] = None, min_
         )
         .reset_index()
     )
+
+    # DO NOT compare `hit_rate` against 0.5 — the correct null is `hit_rate_vs_pool`.
+    # The sign test gets mechanically easier as the disagreement grows: pooled across every
+    # expert, hit rate climbs monotonically with |delta_value| (0.38 in the smallest half of
+    # calls, 0.53, 0.62, then 0.75 in the top 5%). Selecting the top 20% by construction lands
+    # everyone well above a coin flip, so an expert at 0.68 has done nothing but make big
+    # calls. Differencing against the pooled rate over the SAME selected set removes the
+    # gradient and leaves the part that is about the expert.
+    #
+    # The pool is computed WITHIN each non-expert slice level, because the same gradient
+    # recurs one level down: late-round calls hit far more often than early ones, so a global
+    # pool would rank every expert's "rounds 9+" cell above its "rounds 1-3" cell and read as
+    # "everyone is better late". Comparing experts is only meaningful inside a slice.
+    slice_keys = [k for k in by if k != "expert"]
+    if len(big) == 0:
+        out["hit_rate_vs_pool"] = float("nan")
+    elif slice_keys:
+        pool = big.groupby(slice_keys)["correct"].mean().rename("_pool")
+        out = out.merge(pool, left_on=slice_keys, right_index=True, how="left")
+        out["hit_rate_vs_pool"] = out["hit_rate"] - out["_pool"]
+        out = out.drop(columns=["_pool"])
+    else:
+        out["hit_rate_vs_pool"] = out["hit_rate"] - big["correct"].mean()
     out["sufficient"] = out["n_calls"] >= min_cell
-    return out.sort_values("hit_rate", ascending=False).reset_index(drop=True)
+    # Sort by the column callers are told to read. Sorting on raw `hit_rate` ordered the
+    # region slice by how easy each region is, putting every expert's "rounds 9+" cell above
+    # its "rounds 1-3" cell — the exact reading `hit_rate_vs_pool` exists to prevent.
+    return out.sort_values("hit_rate_vs_pool", ascending=False).reset_index(drop=True)

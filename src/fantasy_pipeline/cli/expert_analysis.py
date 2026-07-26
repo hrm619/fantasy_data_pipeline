@@ -21,11 +21,13 @@ from ..analysis.historical import (
     load_snapshot,
 )
 from ..analysis.scorecard import (
+    MIN_GAMES_FOR_PPG,
     add_value_curve,
     bias_by_slice,
     conviction_calls,
     conviction_summary,
     expert_scorecard,
+    positional_bias,
 )
 
 
@@ -66,6 +68,16 @@ def _report(argv) -> int:
     parser.add_argument("--db", default=None)
     parser.add_argument("--season", type=int, default=None)
     parser.add_argument("--metric", default="ppg_half", choices=["ppg_half", "fpts_half"])
+    # Sensitivity-checked over 4-14 and it is NOT load-bearing: spearman_ppg moves at most
+    # 0.045 across floors 4-12 (inside the ~0.05 noise band), and the only ordering changes
+    # are between pairs whose intervals already overlap completely. Exposed so that stays
+    # checkable rather than becoming a buried assumption again.
+    parser.add_argument(
+        "--min-games",
+        type=int,
+        default=MIN_GAMES_FOR_PPG,
+        help=f"games-played floor for per-game scoring (default {MIN_GAMES_FOR_PPG}; not load-bearing)",
+    )
     ns = parser.parse_args(argv)
 
     joined, outcomes = _load_joined(ns.db)
@@ -106,6 +118,17 @@ def _report(argv) -> int:
         "availability_effect",
         "mae_rank_common",
         "mae_points_common",
+        "median_curve_slope",
+    ]
+
+    # Tier space is a PRESENTATION layer, not a result — §3c showed largest-gap segmentation
+    # does not survive resampling, with point estimates falling outside their own stability
+    # range. It is printed in its own block rather than beside the accuracy metrics, so a
+    # readable-but-unreliable number cannot be mistaken for a load-bearing one.
+    tier_cols = [
+        "season",
+        "expert",
+        "n_ranked",
         "tier_hit_rate",
         "tier_stability_95ci",
         "tier_edge_median",
@@ -118,13 +141,15 @@ def _report(argv) -> int:
     print("  mae_rank grows with how many players you rank, so only the common one compares.")
     print("  spearman_common_95ci is a percentile bootstrap over players. Where two experts'")
     print("  intervals overlap, the gap between their point estimates is not evidence.")
-    print("  tier_stability_95ci is NOT a CI — it is how far the hit rate moves when the tier")
-    print("  breaks are re-derived from a resample. The point estimate often falls outside it,")
-    print("  which is the finding: largest-gap segmentation is unstable, so prefer points space.")
-    print("  tier_edge_median = median distance to the nearest tier break, in metric units;")
-    print("  a small value means those tier hits rest on an arbitrary line.")
+    print("  mae_points is priced against each expert's OWN board, so a deeper board neither")
+    print("  helps nor hurts. median_curve_slope is PPG per rank where that expert worked —")
+    print("  a flat curve is why a big rank miss can cost almost nothing.")
     print()
-    print(_display(expert_scorecard(enriched, outcomes, metric=ns.metric))[cols].round(3).to_string(index=False))
+    print(
+        _display(expert_scorecard(enriched, outcomes, metric=ns.metric, min_games=ns.min_games))[cols]
+        .round(3)
+        .to_string(index=False)
+    )
 
     # The cross-season set. Restricting the intersection to these gives a much larger common
     # subset than including a shallow board like Barrett's 99 players, which collapses it.
@@ -139,26 +164,68 @@ def _report(argv) -> int:
     print("  head-to-head. Read the 2023 row as a solo accuracy record.")
     print()
     print(
-        _display(expert_scorecard(enriched, outcomes, experts=overlap, metric=ns.metric))[cols]
+        _display(expert_scorecard(enriched, outcomes, experts=overlap, metric=ns.metric, min_games=ns.min_games))[cols]
         .round(3)
         .to_string(index=False)
     )
 
     print()
     print("=" * 78)
-    print("BIAS BY POSITION  (negative points error = the slot returned less than implied)")
+    print("TIER SPACE  (presentation only — see the caveat)")
     print("=" * 78)
-    print("  No signed RANK error column: within a position it is zero by construction.")
+    print("  tier_stability_95ci is NOT a confidence interval. It is how far the hit rate moves")
+    print("  when the tier breaks are re-derived from a resample, and the point estimate often")
+    print("  falls OUTSIDE it. That is the finding: largest-gap segmentation is unstable, so")
+    print("  tier hit-rate is a property of one particular set of breaks, not of the expert.")
+    print("  tier_edge_median = median distance to the nearest break, in metric units; small")
+    print("  means those hits rest on an arbitrary line. Prefer points space for anything")
+    print("  load-bearing — it needs no boundaries and so cannot inherit this.")
     print()
-    bias = bias_by_slice(enriched, by="pos")
-    print(bias.round(3).to_string(index=False))
+    print(
+        _display(expert_scorecard(enriched, outcomes, metric=ns.metric, min_games=ns.min_games))[tier_cols]
+        .round(3)
+        .to_string(index=False)
+    )
+
+    print()
+    print("=" * 78)
+    print("POSITIONAL BIAS  (signed, cross-positional, in value-over-replacement)")
+    print("=" * 78)
+    print("  READ THE _vs_ref COLUMN, NOT THE RAW ONE. Every expert and every market carries")
+    print("  the same large shared offset (TE strongly positive, QB strongly negative) because")
+    print("  the VOR baselines interact with how deep each position is drafted — that is the")
+    print("  replacement levels talking, not anyone's judgement. Differencing against consensus")
+    print("  ADP cancels it, on the players both ranked, so coverage cannot move it either.")
+    print("  Positive = that position returned MORE than the overall slots the expert spent on")
+    print("  it, i.e. the expert under-drafted it relative to the market.")
+    print()
+    print("  There is no signed POINTS error by position: within a position the expert's ranks")
+    print("  and the realized ranks are permutations of the same set, so it is exactly zero by")
+    print("  construction. The earlier non-zero version was measuring board depth.")
+    print()
+    print(positional_bias(enriched, reference="adp").round(2).to_string(index=False))
+
+    print()
+    print("=" * 78)
+    print("ERROR MAGNITUDE BY POSITION")
+    print("=" * 78)
+    print()
+    print(bias_by_slice(enriched, by="pos").round(3).to_string(index=False))
 
     # Two markets, reported separately and never pooled. `adp` is redraft consensus ADP;
     # `adp_underdog` is Underdog BEST-BALL ADP, which prices a different game (best-ball pays
     # for weekly spikes and never starts anyone, so it bids up high-variance pass-catchers).
     # They correlate 0.965 where both exist — close enough to be tempting, not close enough
     # to be the same bet. 2024 carries both, so the gap can be measured rather than assumed.
-    for reference, label in (("adp", "consensus redraft ADP"), ("adp_underdog", "Underdog BEST-BALL ADP")):
+    #
+    # `fp` rides along as a third reference: diverging from the expert CONSENSUS and diverging
+    # from the MARKET are different bets, and only one of them is a price.
+    references = (
+        ("adp", "consensus redraft ADP — a market"),
+        ("adp_underdog", "Underdog BEST-BALL ADP — a different market"),
+        ("fp", "FantasyPros ECR — the expert consensus, not a price"),
+    )
+    for reference, label in references:
         calls = conviction_calls(enriched, outcomes, reference=reference, metric=ns.metric)
         print()
         print("=" * 78)
@@ -169,12 +236,24 @@ def _report(argv) -> int:
             continue
         seasons = ", ".join(str(s) for s in sorted(calls["season"].unique()))
         print(f"  Top 20% of calls by VALUE of the disagreement. Seasons covered: {seasons}.")
-        print("  NOT comparable to the other market's block — different game, different prices.")
+        print("  Priced on the set both boards ranked, so value_added averages exactly zero")
+        print("  over ALL calls and the sign test is a fair coin. NOT comparable across blocks.")
+        print("  READ hit_rate_vs_pool, NOT hit_rate. The sign test gets mechanically easier as")
+        print("  the disagreement grows — pooled over every expert it runs 0.38 / 0.53 / 0.62 /")
+        print("  0.75 across |delta_value| quartiles — so selecting the top 20% puts everyone")
+        print("  above a coin flip. Only the difference from the pooled rate is about the expert.")
         print()
         print(conviction_summary(calls, by=["expert"]).round(3).to_string(index=False))
         print()
         print("-- by expert x position --")
         print(conviction_summary(calls, by=["expert", "pos"]).round(3).to_string(index=False))
+        print()
+        print("-- by expert x draft region (reference's OVERALL pick, 12-team) --")
+        region_summary = conviction_summary(calls, by=["expert", "region"])
+        if region_summary.empty:
+            print("  (no scorable calls with an overall rank on the reference board)")
+        else:
+            print(region_summary.round(3).to_string(index=False))
 
     print()
     print("⚠️  Three seasons, ~250 players each, four experts with comparable overall ranks")

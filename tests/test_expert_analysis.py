@@ -222,8 +222,15 @@ class TestScorecard:
 
 
 class TestBiasBySlice:
-    def test_reports_no_signed_rank_error(self):
-        # It would be zero by construction within a position and read as "no bias".
+    def test_reports_no_signed_error_in_either_space(self):
+        """Neither signed rank error NOR signed points error may appear here.
+
+        Both are exactly zero by construction within a position — the expert's ranks and the
+        realized ranks are permutations of the same set. The design doc originally claimed
+        signed POINTS error escaped this and "carried the answer"; it does not. The version
+        that looked non-zero was priced against the league-wide curve and was measuring board
+        depth. Signed bias belongs in `positional_bias`, cross-positionally, in VOR.
+        """
         outcomes = _outcomes([float(20 - i) for i in range(12)])
         joined = _ranked("pff", list(range(1, 13))).merge(
             outcomes[["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]],
@@ -231,7 +238,8 @@ class TestBiasBySlice:
         )
         out = bias_by_slice(add_value_curve(joined, outcomes))
         assert "mean_rank_error" not in out.columns
-        assert "mean_points_error" in out.columns
+        assert "mean_points_error" not in out.columns
+        assert "mae_points_in_set" in out.columns
 
     def test_flags_thin_cells(self):
         outcomes = _outcomes([float(20 - i) for i in range(4)])
@@ -449,3 +457,225 @@ def test_scorecard_reports_intervals_and_tier_edge():
     for col in ("spearman_common_lo", "spearman_common_hi", "tier_edge_median"):
         assert col in card.columns
     assert (card["spearman_common_lo"] <= card["spearman_common_hi"]).all()
+
+
+# --------------------------------------------------------------------------------------
+# In-set pricing: the fix for the board-depth artifact in points space.
+# --------------------------------------------------------------------------------------
+
+
+def _multi_pos_outcomes(spec, season=2024):
+    """spec: {pos: [ppg, ...]}. Distinct player_ids across positions."""
+    rows = []
+    for pos, values in spec.items():
+        for i, v in enumerate(values):
+            rows.append(
+                {
+                    "season": season,
+                    "player_id": f"{pos}{i}",
+                    "player_name": f"{pos} {i}",
+                    "pos": pos,
+                    "team": "XXX",
+                    "games": 17,
+                    "fpts_half": v * 17,
+                    "ppg_half": v,
+                }
+            )
+    out = pd.DataFrame(rows)
+    out["pos_finish_rank"] = out.groupby(["season", "pos"])["fpts_half"].rank(ascending=False, method="min").astype(int)
+    out["overall_finish_rank"] = out.groupby("season")["fpts_half"].rank(ascending=False, method="min").astype(int)
+    out["value_over_replacement"] = out["fpts_half"] - out.groupby("pos")["fpts_half"].transform("median")
+    return out
+
+
+def _rank_all(outcomes, expert, order, kind="expert"):
+    """Rank the given player_ids 1..n overall; positional rank derived from that order."""
+    df = pd.DataFrame({"player_id": order})
+    df["season"] = outcomes["season"].iloc[0]
+    df["expert"] = expert
+    df["expert_kind"] = kind
+    df["rank_scope"] = "overall"
+    df["name_as_published"] = df["player_id"]
+    df["overall_rank"] = range(1, len(df) + 1)
+    df = df.merge(outcomes[["season", "player_id", "pos"]], on=["season", "player_id"])
+    df["pos_rank"] = df.groupby("pos")["overall_rank"].rank(method="first").astype(int)
+    return df
+
+
+class TestInSetPricing:
+    def test_signed_positional_points_error_is_zero_by_construction(self):
+        """The load-bearing invariant. If this ever becomes non-zero, someone has
+        reintroduced a cross-set comparison and the 'bias' it shows is board depth."""
+        outcomes = _outcomes([float(30 - i) for i in range(20)])
+        cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+        for order in ([*range(1, 21)], [*reversed(range(1, 21))]):
+            joined = _ranked("pff", order).merge(outcomes[cols], on=["season", "player_id"])
+            enriched = add_value_curve(joined, outcomes)
+            assert enriched["points_error_in_set"].mean() == pytest.approx(0.0, abs=1e-9)
+
+    def test_in_set_pricing_is_invariant_to_board_coverage(self):
+        """The defect this replaces, in miniature.
+
+        Both experts rank their own players in the exactly correct order, so neither has made
+        a mistake. But `sparse` covers only every other player, so against the LEAGUE-WIDE
+        curve its slot-2 player is priced as the league's 2nd best when he is really the 3rd —
+        and it reads as systematically pessimistic. Priced in-set, both correctly read zero.
+        This is the PFF-2025 case: a 426-player board scored as least biased at WR purely for
+        reaching further down a curve indexed on a different set.
+        """
+        outcomes = _outcomes([float(40 - i) for i in range(30)])
+        cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+        full = _ranked("full", list(range(1, 31)))
+        sparse = _ranked("sparse", list(range(1, 31))).iloc[::2].copy()
+        sparse["pos_rank"] = range(1, len(sparse) + 1)
+        sparse["overall_rank"] = range(1, len(sparse) + 1)
+        joined = pd.concat([full, sparse]).merge(outcomes[cols], on=["season", "player_id"])
+        enriched = add_value_curve(joined, outcomes)
+
+        in_set = enriched.groupby("expert")["points_error_in_set"].mean()
+        assert in_set["full"] == pytest.approx(0.0, abs=1e-9)
+        assert in_set["sparse"] == pytest.approx(0.0, abs=1e-9)
+
+        # The league-wide version is exactly what does NOT hold — kept as the contrast.
+        legacy = enriched.groupby("expert")["points_error"].mean()
+        assert legacy["full"] == pytest.approx(0.0, abs=1e-9)
+        assert legacy["sparse"] < -1.0, "coverage alone must be what moves the old metric"
+
+    def test_vor_bias_sums_to_zero_across_positions_but_not_within(self):
+        """Why the bias metric moved to the overall board in VOR: the permutation constraint
+        binds at board level, so per-position means are free to be non-zero."""
+        outcomes = _multi_pos_outcomes({"RB": [20.0, 18.0, 14.0, 9.0], "WR": [19.0, 15.0, 11.0, 7.0]})
+        # An RB-heavy board: every RB taken before every WR.
+        order = ["RB0", "RB1", "RB2", "RB3", "WR0", "WR1", "WR2", "WR3"]
+        joined = _rank_all(outcomes, "rbheavy", order).merge(
+            outcomes[["season", "player_id", "games", "ppg_half", "pos_finish_rank", "value_over_replacement"]],
+            on=["season", "player_id"],
+        )
+        enriched = add_value_curve(joined, outcomes)
+        assert enriched["vor_error"].mean() == pytest.approx(0.0, abs=1e-9)
+        by_pos = enriched.groupby("pos")["vor_error"].mean()
+        assert by_pos.abs().max() > 1e-6, "per-position VOR error must be free to move"
+
+
+class TestPositionalBias:
+    def test_vs_ref_cancels_the_shared_baseline_offset(self):
+        """Every board carries the same large TE/QB offset from the VOR baselines. An expert
+        who ranks identically to the reference must read as zero bias, not as that offset."""
+        from fantasy_pipeline.analysis.scorecard import positional_bias
+
+        outcomes = _multi_pos_outcomes({"RB": [20.0, 18.0, 14.0, 9.0], "TE": [19.0, 15.0, 11.0, 7.0]})
+        order = ["RB0", "TE0", "RB1", "TE1", "RB2", "TE2", "RB3", "TE3"]
+        cols = ["season", "player_id", "games", "ppg_half", "pos_finish_rank", "value_over_replacement"]
+        joined = pd.concat(
+            [_rank_all(outcomes, "adp", order, kind="market"), _rank_all(outcomes, "clone", order)]
+        ).merge(outcomes[cols], on=["season", "player_id"])
+        enriched = add_value_curve(joined, outcomes)
+
+        bias = positional_bias(enriched, reference="adp").set_index(["expert", "pos"])
+        for pos in ("RB", "TE"):
+            assert bias.loc[("clone", pos), "mean_vor_error_vs_ref"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_over_drafting_a_position_shows_up_as_negative_vs_ref(self):
+        from fantasy_pipeline.analysis.scorecard import positional_bias
+
+        outcomes = _multi_pos_outcomes({"RB": [20.0, 18.0, 14.0, 9.0], "WR": [19.0, 15.0, 11.0, 7.0]})
+        alternating = ["RB0", "WR0", "RB1", "WR1", "RB2", "WR2", "RB3", "WR3"]
+        rb_heavy = ["RB0", "RB1", "RB2", "RB3", "WR0", "WR1", "WR2", "WR3"]
+        cols = ["season", "player_id", "games", "ppg_half", "pos_finish_rank", "value_over_replacement"]
+        joined = pd.concat(
+            [_rank_all(outcomes, "adp", alternating, kind="market"), _rank_all(outcomes, "rbheavy", rb_heavy)]
+        ).merge(outcomes[cols], on=["season", "player_id"])
+        enriched = add_value_curve(joined, outcomes)
+
+        bias = positional_bias(enriched, reference="adp").set_index(["expert", "pos"])
+        rb = bias.loc[("rbheavy", "RB"), "mean_vor_error_vs_ref"]
+        wr = bias.loc[("rbheavy", "WR"), "mean_vor_error_vs_ref"]
+        # Spending early overall slots on RBs => RBs returned less than those slots implied.
+        assert rb < 0 < wr
+
+
+class TestConvictionPricing:
+    def test_value_added_is_centred_on_the_common_set(self):
+        """Priced against the league curve, value_added was systematically negative and the
+        sign test favoured 'the expert was right to fade him' regardless of skill."""
+        outcomes = _outcomes([float(30 - i) for i in range(20)])
+        cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+        market = _ranked("adp", list(range(1, 21)), kind="market")
+        expert = _ranked("pff", [*range(5, 21), 1, 2, 3, 4])
+        joined = pd.concat([market, expert]).merge(outcomes[cols], on=["season", "player_id"])
+        enriched = add_value_curve(joined, outcomes)
+
+        calls = conviction_calls(enriched, outcomes)
+        assert not calls.empty
+        assert calls["value_added"].mean() == pytest.approx(0.0, abs=1e-9)
+
+    def test_region_is_read_from_overall_rank_not_positional_rank(self):
+        """DRAFT_REGIONS is in overall-pick terms. Mapping a positional rank through it put
+        every position's top 36 in 'rounds 1-3' — TE36 is not a third-round pick."""
+        # 40 RBs first, so every TE sits past overall pick 36 while its POSITIONAL rank is
+        # still 1-30 — the range where the two mappings disagree.
+        outcomes = _multi_pos_outcomes({"RB": [20.0 - i for i in range(40)], "TE": [19.0 - i for i in range(30)]})
+        order = [f"RB{i}" for i in range(40)] + [f"TE{i}" for i in range(30)]
+        cols = ["season", "player_id", "games", "ppg_half", "pos_finish_rank", "value_over_replacement"]
+        shifted = order[10:] + order[:10]
+        joined = pd.concat(
+            [_rank_all(outcomes, "adp", order, kind="market"), _rank_all(outcomes, "pff", shifted)]
+        ).merge(outcomes[cols], on=["season", "player_id"])
+        enriched = add_value_curve(joined, outcomes)
+
+        from fantasy_pipeline.analysis.scorecard import draft_region
+
+        calls = conviction_calls(enriched, outcomes)
+        # Region must be a pure function of the reference's OVERALL rank.
+        expected = calls["ref_overall_rank"].map(draft_region)
+        assert calls["region"].equals(expected)
+
+        # The specific bug: TEs 1-30 positionally all sit past overall pick 30 here, so a
+        # positional-rank mapping would have called the early ones round 1-3 picks.
+        te = calls[calls["pos"] == "TE"]
+        assert (te["ref_pos_rank_raw"] <= 36).all(), "fixture must exercise the confusable range"
+        assert not (te["region"] == "rounds 1-3").any()
+
+
+def test_conviction_hit_rate_is_reported_against_the_pooled_rate():
+    """`hit_rate` alone cannot be compared to 0.5: selecting the top 20% of calls by
+    |delta_value| lands everyone above a coin flip mechanically. The pooled difference is
+    the comparable number, and it must sum to ~zero across experts by construction."""
+    from fantasy_pipeline.analysis.scorecard import conviction_summary
+
+    outcomes = _outcomes([float(30 - i) for i in range(20)])
+    cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+    market = _ranked("adp", list(range(1, 21)), kind="market")
+    a = _ranked("a", [*range(5, 21), 1, 2, 3, 4])
+    b = _ranked("b", [*range(3, 21), 1, 2])
+    joined = pd.concat([market, a, b]).merge(outcomes[cols], on=["season", "player_id"])
+    calls = conviction_calls(add_value_curve(joined, outcomes), outcomes)
+
+    summary = conviction_summary(calls)
+    assert "hit_rate_vs_pool" in summary.columns
+    weighted = (summary["hit_rate_vs_pool"] * summary["n_calls"]).sum()
+    assert weighted == pytest.approx(0.0, abs=1e-9)
+
+
+def test_conviction_pool_is_computed_within_each_slice():
+    """The size gradient recurs one level down — late-round calls hit far more often than
+    early ones. A global pool would rank every expert's late cell above its early one and
+    read as 'everyone is better late'. Within each slice level the difference must net out."""
+    from fantasy_pipeline.analysis.scorecard import conviction_summary
+
+    calls = pd.DataFrame(
+        {
+            "player_id": [f"P{i}" for i in range(12)],
+            "expert": ["a"] * 3 + ["b"] * 3 + ["a"] * 3 + ["b"] * 3,
+            "region": ["rounds 1-3"] * 6 + ["rounds 9+"] * 6,
+            # Early region is hard (2/6 correct); late region is easy (5/6).
+            "correct": [True, False, False, True, False, False, True, True, True, True, True, False],
+            "value_added": 0.0,
+            "delta_value": 1.0,
+            "is_big_call": True,
+        }
+    )
+    out = conviction_summary(calls, by=["expert", "region"], min_cell=1)
+    for region, group in out.groupby("region"):
+        weighted = (group["hit_rate_vs_pool"] * group["n_calls"]).sum()
+        assert weighted == pytest.approx(0.0, abs=1e-9), f"{region} must net out within its own slice"
