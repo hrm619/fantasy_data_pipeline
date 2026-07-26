@@ -15,6 +15,40 @@ uv run ff-expert-analysis report --min-games 12    # sensitivity: it barely move
 `hit_rate_vs_pool` (§4), positional bias must be read as `mean_vor_error_vs_ref` (§3b-bis), and
 `tier_stability_95ci` is a stability range, not a confidence interval (§3c).
 
+## The result, and what to do about it
+
+**No individual expert beats the consensus.** Over three seasons of like-for-like head-to-head
+(Spearman on the common subset), the aggregate series finish where you would expect if there were
+no exploitable individual skill in this set:
+
+| Series | kind | 2023 | 2024 | 2025 | mean finish |
+|---|---|---|---|---|---|
+| `fp` | consensus | **1** | 3 | **1** | 1.7 |
+| `adp` | market | 2 | 4 | 2 | 2.7 |
+| `pff` | expert | 3 | 2 | 3 | 2.7 |
+| `ds` | expert | — | **1** | 5 | 3.0 |
+| `hw` | expert | 4 | 5 | 4 | 4.3 |
+
+`fp` tops two of three seasons and is never worse than third; no individual expert is ahead of it
+more than once. `ds` swings from first to last, which is the clearest single illustration that
+season-to-season position is not a skill signal. And **every confidence interval overlaps every
+other in all three seasons** — so even the ordering above is suggestive at best.
+
+**The consequence for the live board: do not accuracy-weight the consensus.** `sharp_pos_rank`
+should stay an unweighted mean of its sources until there are materially more seasons. This dataset
+is sufficient to **reject** differential weighting — the aggregate already performs at least as well
+as its best member, and the ranking that would drive the weights does not persist — but it is not
+sufficient to **justify** any particular weighting. Those are different claims and only the first
+is supported.
+
+Two corollaries worth stating because they are what people reach for next:
+
+- **"Expert X was best last year" is not actionable.** `ds` was first in 2024 and last in 2025 on
+  the same metric.
+- **Slicing makes this worse, not better.** Per-position and per-region cells are small enough that
+  the guardrails in §5 (minimum cell size, FDR) exist precisely to stop the slices manufacturing a
+  winner.
+
 Code: `src/fantasy_pipeline/analysis/{historical,scorecard}.py`, tests in
 `tests/test_expert_analysis.py`.
 
