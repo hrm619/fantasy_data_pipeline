@@ -1173,7 +1173,12 @@ def _fpts_capture_export_csv(output_path: str, storage_state: str, rankings_url:
                 viewport={"width": 1400, "height": 1000},
             )
             page = context.new_page()
-            page.goto(rankings_url, wait_until="networkidle", timeout=60000)
+            # NOT networkidle: fantasypoints.com carries ad/analytics traffic that may never
+            # go quiet, so `networkidle` intermittently times out — and Playwright's
+            # TimeoutError is not a RuntimeError, so it bypasses the live test's skip guard
+            # and hard-fails the suite. `_select_fpts_barrett` waits on the tab explicitly,
+            # which is the real precondition.
+            page.goto(rankings_url, wait_until="domcontentloaded", timeout=60000)
 
             _select_fpts_barrett(page)
             # Verify the season BEFORE downloading — a stale board must never reach disk
@@ -1566,7 +1571,8 @@ def _validate_fpts_session(context) -> bool:
     """True if the FantasyPoints redraft page renders its 'Download as CSV' control."""
     page = context.new_page()
     try:
-        page.goto(FPTS_RANKINGS_URL, wait_until="networkidle", timeout=40000)
+        # domcontentloaded, not networkidle — see the note in _fpts_capture_export_csv.
+        page.goto(FPTS_RANKINGS_URL, wait_until="domcontentloaded", timeout=40000)
         page.wait_for_timeout(2500)
         page.locator("button.buttons-csv, button:has-text('Download as CSV')").first.wait_for(
             state="attached", timeout=8000
