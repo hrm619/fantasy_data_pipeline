@@ -436,5 +436,7 @@ Two design corrections followed from it:
   The overlap set stays `fp, pff, ds, hw, adp` and each market is reported beside it in its own
   conviction block, which is where the market comparison actually belongs.
 - **Still the highest-value item: a 2023 board for `fp`/`pff`/`ds`.** It is what converts 2023 from a
-  solo record into a third head-to-head, and it is data acquisition rather than code. Worth checking
-  `data/rankings current/raw archive/` the way `pff-2025` was recovered.
+  solo record into a third head-to-head, and it is data acquisition rather than code. **Not
+  recoverable locally — checked.** `raw archive/` starts at `processed_20250822_*`, and the only 2023
+  artefacts anywhere under `data/` are `hw-2023.csv` and the PFR outcomes (`s2023.xlsx`). It needs an
+  external source (a saved export, a Wayback capture of the 2023 cheatsheet), not another search.
