@@ -89,9 +89,26 @@ class SupplementalBoard:
       derived-vs-published positional ranks correlate 0.994, confirming it is the same
       board and not a different vintage.
     * `hw-2023` — no snapshot exists for 2023 at all.
+    * `fp-2023` / `pff-2023` — likewise. Together with `hw-2023` they make 2023 the third
+      head-to-head season rather than a solo record. (`ds` has no 2023 board and could not be
+      obtained, so 2023 compares three experts where 2024-25 compare four.)
 
-    `market_col`, where present, is Underdog best-ball ADP riding along in the same file.
-    It loads as its own market expert, never merged into `adp`.
+    `market_col`, where present, is a market series riding along in the same file. It loads
+    as its own market expert and is never merged into another one.
+
+    `pos_from` says where the position comes from:
+
+    * `"column"` — `pos_col` names a plain position column ("RB").
+    * `"posrank_prefix"` — `pos_col` names a POSITIONAL RANK column ("WR1") and the position
+      is its letter prefix. Only the prefix is used: the positional *number* is still derived
+      from overall rank by `_derive_pos_ranks`, because published positional columns are not
+      dependable (§7 — the 2025 snapshot's `POS ECR` is all 1s). Do not "simplify" this into
+      reading the number that is sitting right there.
+
+    `market_from_delta_col`, where present, reconstructs a market from a DELTA against this
+    board's own rank: `market = rank_col + delta`. FantasyPros' 2023 export carries
+    `ECR VS. ADP`, which is the only route to a 2023 redraft ADP. Verified against known 2023
+    ADPs before use — Kelce 5, Bijan 9, Pollard 17, Henry 16, A.J. Brown 13.
     """
 
     season: int
@@ -103,6 +120,8 @@ class SupplementalBoard:
     rank_col: str
     market_col: Optional[str] = None
     market_expert: str = "adp_underdog"
+    pos_from: str = "column"
+    market_from_delta_col: Optional[str] = None
 
 
 SUPPLEMENTAL_BOARDS: Tuple[SupplementalBoard, ...] = (
@@ -134,6 +153,29 @@ SUPPLEMENTAL_BOARDS: Tuple[SupplementalBoard, ...] = (
         name_col="Full Name",
         pos_col="Position",
         rank_col="Overall Rank",
+    ),
+    SupplementalBoard(
+        season=2023,
+        expert="pff",
+        filename="pff-2023.csv",
+        as_of_date="2023-08-01",
+        name_col="Name",
+        pos_col="Position",
+        rank_col="Rank",
+    ),
+    SupplementalBoard(
+        season=2023,
+        expert="fp",
+        filename="fp-2023.csv",
+        as_of_date="2023-08-01",
+        name_col="PLAYER NAME",
+        # No plain position column — the position is the prefix of "WR1"/"RB12".
+        pos_col="POSITION RANK",
+        pos_from="posrank_prefix",
+        rank_col="EXPERT RANKING",
+        market_col="ADP",
+        market_expert="adp",
+        market_from_delta_col="ECR VS. ADP",
     ),
 )
 
@@ -321,7 +363,14 @@ def _load_supplemental_board(
     raw = load_data(path)
     df = raw.rename(columns={spec.name_col: "PLAYER NAME"})
     df["PLAYER NAME"] = df["PLAYER NAME"].astype(str).str.strip()
-    df["_pos"] = df[spec.pos_col].astype(str).str.upper().str.strip()
+
+    if spec.pos_from == "posrank_prefix":
+        # "WR1" -> "WR". Only the prefix; the number is derived from overall rank later.
+        df["_pos"] = df[spec.pos_col].astype(str).str.extract(r"^\s*([A-Za-z]+)", expand=False).str.upper()
+    elif spec.pos_from == "column":
+        df["_pos"] = df[spec.pos_col].astype(str).str.upper().str.strip()
+    else:
+        raise ValueError(f"Unknown pos_from {spec.pos_from!r} for {spec.filename}")
     df = df[df["_pos"].isin(ANALYSIS_POSITIONS)].copy()
 
     df = _resolve_player_ids(df, player_key_path, name_col="PLAYER NAME")
@@ -351,14 +400,27 @@ def _load_supplemental_board(
 
     frames = [_block(spec.expert, df[spec.rank_col])]
 
-    if spec.market_col and spec.market_col in df.columns:
-        # RANK the ADP values rather than passing them through as the rank. Underdog
+    market: Optional[pd.Series] = None
+    if spec.market_from_delta_col and spec.market_from_delta_col in df.columns:
+        # Reconstruct the market from its delta against this board's own rank. FantasyPros'
+        # 2023 export publishes `ECR VS. ADP` and no ADP column, and this is the only route
+        # to a 2023 redraft ADP. Verified against known 2023 ADPs before being trusted:
+        # Kelce 5, Bijan 9, Pollard 17, Henry 16, A.J. Brown 13.
+        base = pd.to_numeric(df[spec.rank_col], errors="coerce")
+        delta = pd.to_numeric(df[spec.market_from_delta_col], errors="coerce")
+        market = base + delta
+    elif spec.market_col and spec.market_col in df.columns:
+        market = pd.to_numeric(df[spec.market_col], errors="coerce")
+
+    if market is not None:
+        # RANK the market values rather than passing them through as the rank. Underdog
         # publishes best-ball ADP as a decimal average (1.2, 2.3, 6.4) and `overall_rank`
         # is stored as Int64 — passing the raw value through truncates 1.2 and 1.9 to the
-        # same 1, manufacturing ties and quietly scrambling the top of the board. The
-        # snapshot's own ADP column happens to be integral, so this trap only appears here.
-        adp = pd.to_numeric(df[spec.market_col], errors="coerce")
-        frames.append(_block(spec.market_expert, adp.rank(method="min")))
+        # same 1, manufacturing ties and quietly scrambling the top of the board. A derived
+        # market has the mirror-image problem: it is integral but NOT dense (the 2023 ADP
+        # spans 1..193 over 150 players), so the raw value is not a rank either. Ranking is
+        # correct for both and is the invariant that keeps a new market file safe.
+        frames.append(_block(spec.market_expert, market.rank(method="min")))
 
     out = pd.concat(frames, ignore_index=True)
     out["rank_scope"] = "overall"

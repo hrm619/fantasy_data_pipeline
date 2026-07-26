@@ -679,3 +679,154 @@ def test_conviction_pool_is_computed_within_each_slice():
     for region, group in out.groupby("region"):
         weighted = (group["hit_rate_vs_pool"] * group["n_calls"]).sum()
         assert weighted == pytest.approx(0.0, abs=1e-9), f"{region} must net out within its own slice"
+
+
+# --------------------------------------------------------------------------------------
+# The 2023 boards: fp and pff arriving turned 2023 into a real head-to-head.
+# --------------------------------------------------------------------------------------
+
+
+class TestSupplementalPosFromPosRank:
+    def test_position_is_parsed_from_the_positional_rank_prefix(self, tmp_path):
+        """fp-2023 has no plain position column — only "WR1"/"RB12"."""
+        from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+        (tmp_path / "fp-test.csv").write_text(
+            "EXPERT RANKING,PLAYER NAME,POSITION RANK,ECR VS. ADP\n"
+            "1,Christian McCaffrey,RB1,0\n"
+            "2,CeeDee Lamb,WR1,2\n"
+            "3,Justin Tucker,K1,0\n"
+        )
+        spec = SupplementalBoard(
+            season=2023,
+            expert="fp",
+            filename="fp-test.csv",
+            as_of_date="2023-08-01",
+            name_col="PLAYER NAME",
+            pos_col="POSITION RANK",
+            pos_from="posrank_prefix",
+            rank_col="EXPERT RANKING",
+        )
+        out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+        assert set(out["pos"]) == {"RB", "WR"}, "K must be filtered like any other non-skill row"
+
+    def test_positional_rank_is_derived_not_read_from_the_published_column(self, tmp_path):
+        """We take the position LETTER from "WR12" but never the NUMBER — published
+        positional columns are not dependable (the 2025 snapshot's POS ECR is all 1s)."""
+        from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+        # Published positional ranks are deliberately nonsense; derived ones must be 1,2.
+        (tmp_path / "fp-test.csv").write_text(
+            "EXPERT RANKING,PLAYER NAME,POSITION RANK\n1,Christian McCaffrey,RB77\n2,Breece Hall,RB99\n"
+        )
+        spec = SupplementalBoard(
+            season=2023,
+            expert="fp",
+            filename="fp-test.csv",
+            as_of_date="2023-08-01",
+            name_col="PLAYER NAME",
+            pos_col="POSITION RANK",
+            pos_from="posrank_prefix",
+            rank_col="EXPERT RANKING",
+        )
+        out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+        assert sorted(out["pos_rank"].tolist()) == [1, 2]
+        assert out["pos_rank_derived"].all()
+
+    def test_unknown_pos_from_raises(self, tmp_path):
+        from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+        (tmp_path / "x.csv").write_text("R,PLAYER NAME,P\n1,Christian McCaffrey,RB1\n")
+        spec = SupplementalBoard(
+            season=2023,
+            expert="fp",
+            filename="x.csv",
+            as_of_date="2023-08-01",
+            name_col="PLAYER NAME",
+            pos_col="P",
+            pos_from="nonsense",
+            rank_col="R",
+        )
+        with pytest.raises(ValueError, match="pos_from"):
+            _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+
+
+class TestMarketFromDelta:
+    def test_market_is_reconstructed_as_rank_plus_delta_then_ranked(self, tmp_path):
+        """FantasyPros' 2023 export has no ADP column, only `ECR VS. ADP`. The market is
+        `rank + delta`, and it must be RANKED: the reconstructed values are integral but not
+        dense (the real 2023 board spans 1..193 over 150 players), so the raw value is not a
+        rank any more than Underdog's decimal ADP was."""
+        from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+        (tmp_path / "fp-test.csv").write_text(
+            "EXPERT RANKING,PLAYER NAME,POSITION RANK,ECR VS. ADP\n"
+            "1,Christian McCaffrey,RB1,0\n"  # market 1
+            "2,Travis Kelce,TE1,-1\n"  # market 1 -> ties CMC on raw value
+            "3,CeeDee Lamb,WR1,50\n"  # market 53 -> far from dense
+        )
+        spec = SupplementalBoard(
+            season=2023,
+            expert="fp",
+            filename="fp-test.csv",
+            as_of_date="2023-08-01",
+            name_col="PLAYER NAME",
+            pos_col="POSITION RANK",
+            pos_from="posrank_prefix",
+            rank_col="EXPERT RANKING",
+            market_col="ADP",
+            market_expert="adp",
+            market_from_delta_col="ECR VS. ADP",
+        )
+        out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+        market = out[out["expert"] == "adp"]
+        assert set(out["expert"]) == {"fp", "adp"}
+        assert market["overall_rank"].max() == 3, "a rank, not the raw 53"
+        # CMC and Kelce both reconstruct to 1, so min-ranking gives them 1 and 1, Lamb 3.
+        assert sorted(market["overall_rank"].tolist()) == [1, 1, 3]
+
+    def test_delta_column_takes_precedence_over_a_missing_market_col(self, tmp_path):
+        from fantasy_pipeline.analysis.historical import SupplementalBoard, _load_supplemental_board
+
+        (tmp_path / "f.csv").write_text("R,PLAYER NAME,P,D\n1,Christian McCaffrey,RB1,0\n2,Breece Hall,RB2,1\n")
+        spec = SupplementalBoard(
+            season=2023,
+            expert="fp",
+            filename="f.csv",
+            as_of_date="2023-08-01",
+            name_col="PLAYER NAME",
+            pos_col="P",
+            pos_from="posrank_prefix",
+            rank_col="R",
+            market_col="ADP",  # absent from the file
+            market_expert="adp",
+            market_from_delta_col="D",
+        )
+        out = _load_supplemental_board(spec, str(tmp_path), "player_key_dict.json", verbose=False)
+        assert "adp" in set(out["expert"])
+
+
+def test_2023_adp_is_not_scored_against_fp_that_built_it():
+    """2023's market is reconstructed from FantasyPros' own ECR-VS-ADP column, so fp's
+    'disagreement' with it is that column. True by arithmetic, not judgement."""
+    from fantasy_pipeline.analysis.scorecard import SELF_REFERENTIAL_CALLS
+
+    assert (2023, "fp") in SELF_REFERENTIAL_CALLS["adp"]
+
+
+def test_conviction_exclude_is_scoped_to_the_named_season():
+    """Excluding 2023 fp must not touch fp in any other season."""
+    outcomes = _outcomes([float(30 - i) for i in range(20)])
+    cols = ["season", "player_id", "pos", "games", "ppg_half", "pos_finish_rank"]
+    frames = []
+    for season in (2023, 2024):
+        frames.append(_ranked("adp", list(range(1, 21)), season=season, kind="market"))
+        frames.append(_ranked("fp", [*range(5, 21), 1, 2, 3, 4], season=season))
+    joined = pd.concat(frames).merge(
+        pd.concat([outcomes.assign(season=s) for s in (2023, 2024)])[cols],
+        on=["season", "player_id"],
+    )
+    enriched = add_value_curve(joined, outcomes.assign(season=2023))
+    calls = conviction_calls(enriched, outcomes, exclude=[(2023, "fp")])
+    assert 2023 not in set(calls[calls["expert"] == "fp"]["season"])
+    assert 2024 in set(calls[calls["expert"] == "fp"]["season"])

@@ -34,7 +34,9 @@ and per-expert **supplemental boards** that carry one expert's board better than
 |---|---|---|
 | `2024 Pre-Season Rankings (August 20 2024).csv` | 217 | Hand-built spreadsheet, bespoke schema |
 | `2025 Pre-Season Rankings (August 22 2025).csv` | 270 | This pipeline's own output + extra columns |
-| `hw-2023.csv` | 254 | Underdog export — the only 2023 board |
+| `hw-2023.csv` | 254 | Underdog export |
+| `fp-2023.csv` | 150 | FantasyPros export; carries `ECR VS. ADP`, the only route to a 2023 market |
+| `pff-2023.csv` | 400 | PFF export (336 skill rows) |
 | `hw-2024.csv` | 273 | Underdog export — overall ranks the snapshot lacked |
 | `pff-2025.csv` | 512 | PFF's own export, recovered from `raw archive/` |
 
@@ -46,20 +48,36 @@ Every file gets its own adapter. Supplemental boards **override** the snapshot f
 
 | Expert | key | 2023 | 2024 | 2025 |
 |---|---|---|---|---|
-| FantasyPros ECR | `fp` | — | 217 | 254 |
-| PFF | `pff` | — | 216 | 448 |
+| FantasyPros ECR | `fp` | 150 | 217 | 254 |
+| PFF | `pff` | 335 | 216 | 448 |
 | DraftSharks | `ds` | — | 147 | 245 |
 | Hayden Winks | `hw` | 253 | 273 | 242 |
 | 4 For 4 | `4for4` | — | 183 | — |
 | The Ringer | `ringer` | — | 145 | — |
 | Scott Barrett | `fpts` | — | — | 100 |
 | JJ Zachariason | `jj` | — | — | 231 |
-| Consensus redraft ADP (market) | `adp` | — | 217 | 254 |
+| Consensus redraft ADP (market) | `adp` | 150† | 217 | 254 |
 | Underdog best-ball ADP (market) | `adp_underdog` | 253 | 273 | — |
+
+† 2023's `adp` is **reconstructed**, not published — see §4.
 
 **`fp`, `pff`, `ds` and `hw` have comparable overall ranks in 2024 and 2025.** `hw` joined that set
 once `hw-2024.csv` supplied his overall ranks — the snapshot carried him positionally only
-(`"RB1"`). **2023 is `hw` alone**, so it is a solo accuracy record, not a head-to-head.
+(`"RB1"`). **2023 is a three-way head-to-head** (`fp`, `pff`, `hw`) on a common subset of 149 —
+comparable to 2024's 145. No 2023 DraftSharks board exists and one could not be obtained, so 2023
+compares three experts where 2024-25 compare four.
+
+Adding `fp` and `pff` to 2023 **lowers `hw`'s 2023 `spearman_common` from 0.754 to 0.628**, and that
+is a correction, not a regression: when `hw` was the only 2023 board its "common subset" was its own
+248 players, which is not a head-to-head at all. 0.628 is his score on a real 149-player
+intersection.
+
+The 2023 files were checked for vintage before being trusted, because a plausible board from the
+wrong season is invisible on disk (the `_assert_fpts_season` lesson). Two signals, both pass:
+cross-board agreement runs **0.927-0.975**, in family with same-vintage boards; and each board fits
+2023 outcomes better than 2024 better than 2025 (`pff` −0.659 / −0.534 / −0.447; `fp` −0.463 /
+−0.388 / −0.325; `hw` −0.546 / −0.462 / −0.348). A misfiled board would not decay monotonically with
+distance in time.
 
 These counts are rows **loaded**. The scorecard reports `n_ranked`, which is rows that also join to a
 realized outcome, so it is slightly lower — `pff` 2025 loads 448 and scores 426; `hw` loads 253/273
@@ -80,7 +98,8 @@ They are therefore loaded as **separate market series and never pooled**. Convic
 once per market, in its own block, labelled with the seasons it covers. 2024 carries both precisely
 so the divergence can be *measured* rather than assumed. (The 2024 snapshot's own `Underdog` column
 was originally excluded as "not an expert ranking" — correct, but it is a legitimate *market*, and
-it is what makes 2023's conviction numbers interpretable at all.)
+it was what made 2023's conviction numbers interpretable before `fp-2023` supplied a reconstructed
+redraft ADP alongside it. 2023 now carries both markets too.)
 
 ### Known defects — carry these into every result
 
@@ -289,6 +308,21 @@ at all. Pinned by `test_value_added_is_centred_on_the_common_set`.
 terms (rounds 1-3 = picks 1-36); it was being fed a *positional* rank, which put every position's top
 36 in "rounds 1-3" — TE36 is not a third-round pick.
 
+### 2023's market is reconstructed, and `fp` is excluded from it
+
+FantasyPros' 2023 export publishes no ADP column, only **`ECR VS. ADP`**. `ADP = EXPERT RANKING +
+delta` is the only route to a 2023 redraft market, and it reproduces known 2023 ADPs exactly — Kelce
+5, Bijan 9, Pollard 17, Henry 16, A.J. Brown 13. It is **ranked, not passed through**: the
+reconstructed values are integral but *not dense* (they span 1–193 over 150 players), so the raw
+value is no more a rank than Underdog's decimal ADP was. Same trap, mirror image.
+
+**`fp` is therefore not scored against `adp` in 2023** (`SELF_REFERENTIAL_CALLS`). The market is built
+out of fp's own column, so fp's "disagreement" with it *is* that column — true by arithmetic rather
+than by judgement. The correlation shows it: `adp`↔`fp` is **0.975** in 2023, the highest pair, against
+0.93–0.96 for every other pair. Every other expert's 2023 comparison against that market is sound —
+none of them contributed to building it. The exclusion is keyed on `(season, expert)`, so `fp` in
+2024 and 2025, where `adp` is independently published, is untouched.
+
 ### Do not compare conviction hit-rate to 0.5
 
 The sign test gets **mechanically easier as the disagreement grows**. Pooled across every expert, hit
@@ -332,7 +366,7 @@ manufactures confident nonsense.
   "which cell is significant" reading this section exists to prevent. Removed as a stated goal rather
   than left as an unbuilt promise.
 - **Sample size, plainly.** Three seasons, ~250 players each, four comparable experts in 2024–2025
-  and one in 2023. Spearman differences below ~0.05 are indistinguishable from noise. This can rank
+  and three in 2023. Spearman differences below ~0.05 are indistinguishable from noise. This can rank
   experts *directionally* and surface patterns worth watching. It cannot establish that one expert is
   better than another, and no amount of slicing will change that — slicing makes it worse.
 - **The intervals confirm this, and they are the point.** `spearman_common_95ci` is a percentile
@@ -427,16 +461,19 @@ Two design corrections followed from it:
 - ~~Should `hw` 2024 (positional-only) be included in positional analyses?~~ **Resolved** —
   `hw-2024.csv` supplies overall ranks, so `hw` is now scored exactly like every other expert in all
   three seasons and needs no special case.
-- ~~Is a third season available?~~ **2023 is in**, via `hw-2023.csv`. But it is **one expert**, so it
-  strengthens HW's individual record and adds a third value curve without enabling any new
-  head-to-head. A 2023 board for `fp`/`pff`/`ds` would be worth more than anything else on this list.
+- ~~Is a third season available?~~ ~~**2023 is in**, via `hw-2023.csv`. But it is **one expert**.~~
+  **Resolved: 2023 is now a real head-to-head.** `fp-2023.csv` (150) and `pff-2023.csv` (336 skill)
+  arrived and load as supplemental boards, giving a 149-player common subset — comparable to 2024's
+  145 — plus a reconstructed 2023 market (§4). **`ds` remains unavailable** and could not be
+  obtained, so 2023 compares three experts against 2024-25's four. That is the only remaining gap in
+  the season grid, and it is data acquisition, not code: one file would close it.
 - ~~Does `adp_underdog` belong in the cross-season overlap set?~~ **Resolved: no, and neither does
   forcing the question.** It has 2023+2024, `adp` has 2024+2025 — neither market spans all three
   seasons, so admitting either shrinks the overlap for a series that is not an expert opinion anyway.
   The overlap set stays `fp, pff, ds, hw, adp` and each market is reported beside it in its own
   conviction block, which is where the market comparison actually belongs.
-- **Still the highest-value item: a 2023 board for `fp`/`pff`/`ds`.** It is what converts 2023 from a
-  solo record into a third head-to-head, and it is data acquisition rather than code. **Not
-  recoverable locally — checked.** `raw archive/` starts at `processed_20250822_*`, and the only 2023
-  artefacts anywhere under `data/` are `hw-2023.csv` and the PFR outcomes (`s2023.xlsx`). It needs an
-  external source (a saved export, a Wayback capture of the 2023 cheatsheet), not another search.
+- **Still open: a 2023 DraftSharks board.** `fp` and `pff` were supplied externally; `ds` could not
+  be. It is not recoverable locally — `raw archive/` starts at `processed_20250822_*`, and the only
+  2023 artefacts under `data/` are the three supplemental boards and the PFR outcomes
+  (`s2023.xlsx`). It needs an external source (a saved export, a Wayback capture), not another
+  search. With it, all three seasons would carry the same four experts.

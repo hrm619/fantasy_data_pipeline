@@ -22,6 +22,7 @@ from ..analysis.historical import (
 )
 from ..analysis.scorecard import (
     MIN_GAMES_FOR_PPG,
+    SELF_REFERENTIAL_CALLS,
     add_value_curve,
     bias_by_slice,
     conviction_calls,
@@ -160,8 +161,9 @@ def _report(argv) -> int:
     print("=" * 78)
     print(f"EXPERT SCORECARD — cross-season overlap only ({', '.join(overlap)})")
     print("=" * 78)
-    print("  2023 has only hw, so its 'common subset' is just hw's own board — not a")
-    print("  head-to-head. Read the 2023 row as a solo accuracy record.")
+    print("  Backing boards differ by season: 2024-25 carry all five, 2023 carries fp, pff")
+    print("  and hw only — no DraftSharks 2023 board exists, so its common subset is a")
+    print("  three-way intersection and its market is `adp` reconstructed from fp (see §4).")
     print()
     print(
         _display(expert_scorecard(enriched, outcomes, experts=overlap, metric=ns.metric, min_games=ns.min_games))[cols]
@@ -226,7 +228,13 @@ def _report(argv) -> int:
         ("fp", "FantasyPros ECR — the expert consensus, not a price"),
     )
     for reference, label in references:
-        calls = conviction_calls(enriched, outcomes, reference=reference, metric=ns.metric)
+        calls = conviction_calls(
+            enriched,
+            outcomes,
+            reference=reference,
+            metric=ns.metric,
+            exclude=SELF_REFERENTIAL_CALLS.get(reference),
+        )
         print()
         print("=" * 78)
         print(f"CONVICTION vs {reference.upper()}  ({label})")
@@ -256,9 +264,9 @@ def _report(argv) -> int:
             print(region_summary.round(3).to_string(index=False))
 
     print()
-    print("⚠️  Three seasons, ~250 players each, four experts with comparable overall ranks")
-    print("   in 2024-2025 (2023 is hw only). Differences this small are directional, not")
-    print("   conclusive — check whether the 95% CIs overlap before believing an ordering.")
+    print("⚠️  Three seasons, ~250 players each: four experts with comparable overall ranks")
+    print("   in 2024-2025, three in 2023 (no ds board). Differences this small are")
+    print("   directional, not conclusive — check whether the 95% CIs overlap first.")
     print("   Rows marked sufficient=False are below the minimum cell size: anecdotes.")
     return 0
 

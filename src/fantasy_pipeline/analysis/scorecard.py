@@ -15,7 +15,7 @@ ranked different numbers of players is the easiest way to get a wrong answer her
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,6 +26,13 @@ MIN_GAMES_FOR_PPG = 8
 # Cells thinner than this report as insufficient rather than as a number. expert x position
 # x draft-region over two seasons produces very small groups.
 MIN_CELL_SIZE = 10
+
+# Comparisons that are true by construction rather than by judgement, keyed by reference.
+# 2023's `adp` is reconstructed from FantasyPros' own `ECR VS. ADP` column (the only route to
+# a 2023 redraft ADP), so fp's "disagreement" with it IS that column. They correlate 0.975 in
+# 2023 — the highest pair — against 0.93-0.96 for every other pair. Scored, it would read as
+# fp being unusually sharp against the market it was used to build.
+SELF_REFERENTIAL_CALLS: Dict[str, List[Tuple[int, str]]] = {"adp": [(2023, "fp")]}
 
 # Draft regions in overall-pick terms (12-team).
 DRAFT_REGIONS = [("rounds 1-3", 1, 36), ("rounds 4-8", 37, 96), ("rounds 9+", 97, 10_000)]
@@ -557,6 +564,7 @@ def conviction_calls(
     reference: str = "adp",
     metric: str = "ppg_half",
     top_quantile: float = 0.8,
+    exclude: Optional[List[Tuple[int, str]]] = None,
 ) -> pd.DataFrame:
     """Where an expert departed sharply from the market, and whether it paid.
 
@@ -576,11 +584,21 @@ def conviction_calls(
     same slots, so `value_added` averages to zero by construction and the sign test is a fair
     coin. Re-ranking within the common set is also what makes the two boards commensurable at
     all: raw positional ranks come from boards of different depths.
+
+    `exclude` drops (season, expert) pairs whose disagreement with the reference is not a real
+    disagreement. It exists for **2023 `fp` vs `adp`**: the 2023 market is reconstructed from
+    FantasyPros' own `ECR VS. ADP` column, so `fp`'s delta against it *is* that column and the
+    comparison is true by arithmetic rather than by judgement (they correlate 0.975, the
+    highest pair in 2023, against 0.93-0.96 for everyone else). Scoring it would read as a
+    finding. Every other expert's 2023 comparison against that market is fine — none of them
+    contributed to constructing it.
     """
     ref = joined[joined["expert"] == reference][["season", "player_id", "pos_rank", "overall_rank"]].rename(
         columns={"pos_rank": "ref_pos_rank_raw", "overall_rank": "ref_overall_rank"}
     )
     df = joined[joined["expert"] != reference].merge(ref, on=["season", "player_id"], how="inner")
+    for season, expert in exclude or ():
+        df = df[~((df["season"] == season) & (df["expert"] == expert))]
     df = df[df["pos_rank"].notna() & df["ref_pos_rank_raw"].notna() & df[metric].notna()].copy()
     if df.empty:
         return df.assign(delta_rank=None, delta_value=None, value_added=None, correct=None, is_big_call=None)
