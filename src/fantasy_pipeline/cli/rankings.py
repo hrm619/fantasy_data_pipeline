@@ -178,7 +178,7 @@ def _fetch_ds_command(argv) -> int:
 def _fetch_fp_command(argv) -> int:
     """Fetch FantasyPros consensus rankings into the update folder (`ff-rankings fetch-fp`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
-    from fantasy_pipeline.scraper.fetch_rankings import fetch_fantasypros_rankings
+    from fantasy_pipeline.scraper.fetch_rankings import FP_DEFAULT_SCORING, fetch_fantasypros_rankings
 
     parser = argparse.ArgumentParser(
         prog="ff-rankings fetch-fp", description="Fetch FantasyPros expert consensus rankings into the update folder"
@@ -190,7 +190,10 @@ def _fetch_fp_command(argv) -> int:
     )
     parser.add_argument("--year", type=int, default=CURRENT_SEASON, help="Season year for the filename")
     parser.add_argument(
-        "--scoring", choices=["ppr", "half-ppr", "standard"], default="ppr", help="Scoring format (default: ppr)"
+        "--scoring",
+        choices=["ppr", "half-ppr", "standard"],
+        default=FP_DEFAULT_SCORING,
+        help=f"Scoring format (default: {FP_DEFAULT_SCORING} — matches the rest of the board)",
     )
     parser.add_argument(
         "--min-players", type=int, default=200, help="Coverage floor — fail if fewer players parse (default: 200)"
@@ -225,7 +228,7 @@ def _ensure_session_if_requested(auto_login: bool, source: str) -> bool:
 def _fetch_pff_command(argv) -> int:
     """Fetch PFF draft rankings into the update folder (`ff-rankings fetch-pff`)."""
     from fantasy_pipeline.config import DEFAULT_PATHS, CURRENT_SEASON
-    from fantasy_pipeline.scraper.fetch_rankings import fetch_pff
+    from fantasy_pipeline.scraper.fetch_rankings import PFF_MIN_PLAYERS, fetch_pff
 
     parser = argparse.ArgumentParser(
         prog="ff-rankings fetch-pff", description="Fetch PFF draft rankings (saved session) into the update folder"
@@ -239,8 +242,8 @@ def _fetch_pff_command(argv) -> int:
     parser.add_argument(
         "--min-players",
         type=int,
-        default=200,
-        help="Coverage floor — fail if fewer players are captured (default: 200)",
+        default=PFF_MIN_PLAYERS,
+        help=f"Coverage floor — fail if fewer players are captured (default: {PFF_MIN_PLAYERS})",
     )
     parser.add_argument("--auto-login", action="store_true", help="Open a login window if the PFF session has expired")
     ns = parser.parse_args(argv)

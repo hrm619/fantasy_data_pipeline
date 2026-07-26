@@ -9,7 +9,9 @@ import io
 import json
 import os
 import re
+import time
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -56,6 +58,14 @@ FP_CHEATSHEET_URLS = {
     "standard": "https://www.fantasypros.com/nfl/rankings/consensus-cheatsheets.php",
 }
 
+# The board this pipeline drafts against is HALF-PPR (ds/adp/hw/pff are all pinned to it).
+# This used to default to 'ppr', so `refresh-all` — which passes no scoring — silently
+# pulled the full-PPR cheatsheet: fp was the only source whose format disagreed with the
+# rest of the board, tilted WR-over-RB exactly as PPR predicts. Keep this in step with
+# PFF_SCORING_LABEL and DS_ADP_SCORING; a source-level format mismatch is invisible
+# downstream (the ranks are all plausible integers) and only shows up as a skewed board.
+FP_DEFAULT_SCORING = "half-ppr"
+
 
 def _parse_fantasypros_rankings(html: str) -> list[dict]:
     """Parse FantasyPros rankings from the embedded `ecrData` JSON into fp-schema rows.
@@ -87,7 +97,7 @@ def _parse_fantasypros_rankings(html: str) -> list[dict]:
 
 
 def fetch_fantasypros_rankings(
-    output_dir: str, year: int = CURRENT_SEASON, scoring: str = "ppr", min_players: int = 200
+    output_dir: str, year: int = CURRENT_SEASON, scoring: str = FP_DEFAULT_SCORING, min_players: int = 200
 ) -> str:
     """Fetch FantasyPros expert consensus rankings (fp) and save a pipeline-ready CSV.
 
@@ -98,7 +108,7 @@ def fetch_fantasypros_rankings(
     Args:
         output_dir: Directory to save the CSV (the pipeline's update/ folder).
         year: Season year for the filename (must match FILE_MAPPINGS' fp prefix).
-        scoring: One of 'ppr' (default), 'half-ppr', 'standard'.
+        scoring: One of 'half-ppr' (default — matches the rest of the board), 'ppr', 'standard'.
         min_players: Coverage floor — raise if fewer rows parse (layout drift guard).
 
     Returns:
@@ -739,6 +749,170 @@ PFF_EXPORT_HEADER = [
 # (and matched the *locked* button, producing a bare download timeout).
 PFF_CSV_BUTTON_SELECTOR = 'button[data-testid="csvDownloadButton"]'
 
+# PFF's scoring-format control, and the format this pipeline consumes.
+#
+# **The page defaults to full PPR and the export silently follows it.** Nothing about the
+# downloaded CSV records the scoring format — it is the same 9 columns either way, filled
+# with plausible integers — so a PPR board looks identical to a half-PPR one on disk. This
+# ran undetected: pff is NOT excluded from the consensus math (`_is_derived_or_market_col`
+# drops only adp_/fp_/avg_/sd_), so a full-PPR board was being averaged into four half-PPR
+# ones, skewing avg_RK, sd_RK, avg_POS RANK and therefore every ADP Delta.
+#
+# Confirmed by exporting both formats: the board reorders materially (Jonathan Taylor 7->4,
+# James Cook 12->9, while Nacua/Chase/JSM/St. Brown/Lamb all fall) and projected points move
+# by exactly 0.5 x receptions (Nacua 324.16 -> 261.45, ~125 rec; Gibbs 342.88 -> 306.52, ~73).
+#
+# The dropdown's own label is the only in-page signal of which board is rendered, so the
+# fetcher sets it explicitly and asserts it took effect before downloading — same reasoning
+# as _assert_ds_adp_board and _assert_fpts_season. Do not assume the previous run's setting
+# persisted in the saved session.
+PFF_SCORING_DROPDOWN_SELECTOR = 'button[data-testid="fantasyTools.filters.scoringTypeDropdown"]'
+PFF_SCORING_LABEL = "Half PPR"
+
+
+# label -> (option's data-testid, the scoringType the page's own board request must carry).
+#
+# Options are targeted by **data-testid, not by accessible name**. The trigger button's
+# accessible name *is* its current selection, so `get_by_role("button", name="PPR",
+# exact=True)` matches BOTH the trigger and the PPR option, and `.first` resolves to the
+# trigger in DOM order — clicking it just closes the drawer. Exact matching does not save
+# you; only the testid distinguishes them.
+#
+# The drawer holds **12** options in three groups (REDRAFT x5 incl. IDP, DYNASTY x6,
+# BEST_BALL), not the four redraft ones mapped here.
+PFF_SCORING_OPTIONS = {
+    "PPR": ("fantasyTools.dropdownOption.REDRAFT_PPR", "REDRAFT_PPR"),
+    "Half PPR": ("fantasyTools.dropdownOption.REDRAFT_HALF_PPR", "REDRAFT_HALF_PPR"),
+    "NON-PPR": ("fantasyTools.dropdownOption.REDRAFT_NON_PPR", "REDRAFT_NON_PPR"),
+    "2-QB PPR": ("fantasyTools.dropdownOption.REDRAFT_2QB_PPR", "REDRAFT_2QB_PPR"),
+}
+
+# The page's own board request, which self-describes its scoring format:
+#   consumer-api.pff.com/football/v1/fantasy/rankings?...&scoringType=REDRAFT_HALF_PPR
+#
+# **Anchored on netloc+path deliberately.** `/fantasy/weekly-rankings` also carries a
+# `scoringType` param (lowercase, e.g. 'ppr') and fires on the same page load, so a
+# substring match on 'scoringType=' or on 'rankings' matches the wrong request.
+_PFF_RANKINGS_API_RE = re.compile(r"consumer-api\.pff\.com/football/v\d+/fantasy/rankings\Z")
+
+
+def _pff_response_scoring_type(response) -> Optional[str]:
+    """The scoringType of a successful PFF *draft* rankings API response, else None."""
+    parts = urlparse(response.url)
+    if not _PFF_RANKINGS_API_RE.search(parts.netloc + parts.path):
+        return None
+    if not response.ok:
+        return None
+    values = parse_qs(parts.query).get("scoringType") or [None]
+    return values[0]
+
+
+class _PffBoardWatcher:
+    """Records which scoring board the page actually loaded.
+
+    This is the ground truth for what the CSV export will contain: the export fires **no
+    network request of its own** (it serialises the client store), and that store is filled
+    solely by the rankings API response this watches.
+
+    **Construct before `page.goto`.** Re-selecting an already-current option fires zero
+    requests, so the early-exit path has nothing to wait on and must be satisfied by the
+    response from the initial page load.
+    """
+
+    def __init__(self, page):
+        self._page = page
+        self.loaded: Optional[str] = None
+        self.seen: list[str] = []
+        page.on("response", self._on_response)
+
+    def _on_response(self, response) -> None:
+        scoring = _pff_response_scoring_type(response)
+        if scoring:
+            self.loaded = scoring
+            self.seen.append(scoring)
+
+    def wait_for(self, scoring_type: str, timeout_ms: int = 30000) -> bool:
+        """True once a successful board request for `scoring_type` has been observed."""
+        deadline = time.monotonic() + timeout_ms / 1000
+        while time.monotonic() < deadline:
+            if self.loaded == scoring_type:
+                return True
+            # page.wait_for_timeout, NOT time.sleep: Playwright's sync driver only dispatches
+            # queued 'response' events while it is pumped, so sleeping here hangs forever on
+            # events that have already arrived.
+            self._page.wait_for_timeout(50)
+        return self.loaded == scoring_type
+
+
+def _select_pff_scoring(page, label: str = PFF_SCORING_LABEL) -> None:
+    """Switch PFF's rankings board to `label` scoring (see `_assert_pff_board_loaded`).
+
+    Selecting is not proof: the dropdown's label flips from optimistic React state ~0.1s
+    before the board request even goes out, and flips identically when that request fails.
+    Pair every call with `_assert_pff_board_loaded`.
+    """
+    if label not in PFF_SCORING_OPTIONS:
+        raise ValueError(f"Unknown PFF scoring {label!r}; choose from {sorted(PFF_SCORING_OPTIONS)}")
+    option_testid, _ = PFF_SCORING_OPTIONS[label]
+
+    dropdown = page.locator(PFF_SCORING_DROPDOWN_SELECTOR).first
+    try:
+        dropdown.wait_for(state="visible", timeout=15000)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not find PFF's scoring-format control ({PFF_SCORING_DROPDOWN_SELECTOR}). "
+            "The session may have expired, or the page layout changed. Try:\n"
+            "  ff-rankings login pff"
+        ) from exc
+
+    if dropdown.inner_text().strip() == label:
+        return  # already current — clicking again fires no request to wait on
+
+    dropdown.click()
+    option = page.locator(f'button[data-testid="{option_testid}"]').first
+    try:
+        option.wait_for(state="visible", timeout=10000)
+    except Exception as exc:
+        try:
+            available = page.eval_on_selector_all(
+                '[data-testid^="fantasyTools.dropdownOption."]',
+                "els => els.map(e => e.getAttribute('data-testid'))",
+            )
+        except Exception:
+            available = []
+        raise RuntimeError(
+            f"PFF's scoring dropdown has no {label!r} option (expected "
+            f"button[data-testid={option_testid!r}]). Options present: "
+            f"{available or 'none — the drawer did not open'}. "
+            "Refusing to export an unverified board."
+        ) from exc
+    option.click()
+
+
+def _assert_pff_board_loaded(watcher: "_PffBoardWatcher", label: str = PFF_SCORING_LABEL) -> None:
+    """Raise unless the page actually loaded `label`'s board.
+
+    The only trustworthy signal. Asserting the dropdown's own label instead lets a stale
+    board export under the right filename: the label is optimistic client state, so it reads
+    'Half PPR' even when the board request was never answered. That failure is undetectable
+    downstream — the export has no scoring column, the 9-col header and row count are
+    identical either way, and `pff_` feeds avg_RK/sd_RK and therefore every ADP Delta.
+    """
+    _, scoring_type = PFF_SCORING_OPTIONS[label]
+    if watcher.wait_for(scoring_type):
+        return
+    hint = (
+        "  ff-rankings login pff"
+        if not watcher.seen
+        else "  Re-run; if it persists, PFF's rankings API may have changed."
+    )
+    raise RuntimeError(
+        f"PFF's scoring dropdown reads {label!r} but the page never loaded the "
+        f"{scoring_type} board (boards loaded this session: {watcher.seen or 'none'}). "
+        "The dropdown label flips from client state before the fetch, so it is not proof. "
+        f"Refusing to export — the CSV would carry the previous scoring format.\n{hint}"
+    )
+
 
 def _pff_output_filename(year: int) -> str:
     """Filename matching FILE_MAPPINGS' 'Draft-rankings-export' prefix."""
@@ -798,7 +972,13 @@ def _pff_capture_export_csv(output_path: str, storage_state: str) -> int:
                 storage_state=storage_state,
             )
             page = context.new_page()
+            # Watcher BEFORE goto: if the saved session already has Half PPR selected, no
+            # request fires on selection and the initial load's response is the only proof.
+            watcher = _PffBoardWatcher(page)
             page.goto(PFF_RANKINGS_URL, wait_until="domcontentloaded", timeout=60000)
+            # The page defaults to full PPR and the export follows the dropdown silently.
+            _select_pff_scoring(page)
+            _assert_pff_board_loaded(watcher)
 
             with page.expect_download(timeout=30000) as download_info:
                 _click_pff_export(page)
@@ -839,7 +1019,12 @@ def _validate_pff_csv(output_path: str) -> int:
     return len(data_rows)
 
 
-def fetch_pff(output_dir: str, year: int = CURRENT_SEASON, min_players: int = 200) -> str:
+# PFF's real board is ~512 players. 200 was low enough that a badly truncated capture — the
+# same class of silent-partial-data risk as the scoring bug — would sail through.
+PFF_MIN_PLAYERS = 400
+
+
+def fetch_pff(output_dir: str, year: int = CURRENT_SEASON, min_players: int = PFF_MIN_PLAYERS) -> str:
     """Fetch PFF draft rankings via a saved logged-in session and save a CSV.
 
     PFF's rankings are behind a premium subscription. This reuses the session saved by

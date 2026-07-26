@@ -427,6 +427,49 @@ source is unavailable or its data is untrustworthy; prefer it over shipping bad 
 - Merges hw-data and fpts-data like weekly rankings
 - **Auto-scrapes HW rankings** from Underdog Network if not present in update folder
 
+### Every redraft source must be HALF-PPR
+
+**A scoring-format mismatch is invisible downstream.** Every source emits the same columns of
+plausible integer ranks whatever format it was pulled in, so a PPR board and a half-PPR board are
+indistinguishable on disk and nothing validates or records the format. It surfaces only as a subtly
+skewed consensus. Two sources were silently on **full PPR** until 2026-07:
+
+| Source | Format | Pinned by | In `avg_RK`? |
+|---|---|---|---|
+| `adp` | half-PPR | URL `/adp/half-ppr/sleeper/12` + `_assert_ds_adp_board` (label must read `0.5 PPR`) | n/a |
+| `ds` | half-PPR | `DRAFTSHARKS_URL` = `/rankings/half-ppr` | yes |
+| `hw` | half-PPR | Yahoo article slugs (`...-in-half-ppr-`); the discovery regex can't match another format | yes |
+| `fp` | half-PPR | `FP_DEFAULT_SCORING` → `half-point-ppr-cheatsheets.php` | no (consensus-of-consensuses) |
+| `pff` | half-PPR | `_select_pff_scoring` sets + asserts the on-page dropdown | **yes** |
+| `fpts` | half-PPR **(assumed)** | nothing — see below | yes |
+| `jj` | half-PPR **(assumed)** | nothing — see below | yes |
+
+- **`fp` used to default to `scoring="ppr"`**, and `refresh-all` passes no scoring, so it pulled the
+  full-PPR cheatsheet. Contained damage: `fp_` is excluded from the consensus math, so it only skewed
+  the *displayed* `fp_RK`/`fp_POS RANK` and the board's universe. Measured cost of the fix: mean 5.0
+  ranks, systematically RB −5.7 / WR +3.0.
+- **`pff`'s rankings page defaults to full PPR and its CSV export silently follows the on-page
+  dropdown** (`fantasyTools.filters.scoringTypeDropdown`; options `PPR / Half PPR / NON-PPR / 2-QB
+  PPR`). The fetcher never touched it. This one **is** in the consensus math — `_is_derived_or_market_col`
+  excludes only `adp_`/`fp_`/`avg_`/`sd_` — so a full-PPR board was averaged into three half-PPR ones.
+  Measured cost of the fix: mean 1.3 ranks at the source, systematically RB −2.0 / WR +1.0, diluted
+  ~4× in `avg_RK`. Real, but modest — don't over-bill it.
+  - **Verify a format change by re-exporting both and diffing**, not by eyeballing ranks. PPR → half
+    reorders the board materially (Jonathan Taylor 7→4, James Cook 12→9, while Nacua/Chase/JSN/
+    St. Brown/Lamb all fall) and moves projected points by exactly **0.5 × receptions** (Nacua
+    324.16 → 261.45, ~125 rec; Gibbs 342.88 → 306.52, ~73 rec). That arithmetic is the proof.
+- **`fpts` and `jj` cannot be pinned from the source** and are **assumed** half-PPR on the maintainer's
+  judgement, not verified. FantasyPoints' Barrett board has no scoring selector, label, or text (only a
+  `season` param); JJ's Patreon posts state no format in title or body, FantasyPros no longer carries his
+  board, and Barrett's draft guide is paywalled. If either shop ever publishes a format switch, wire it
+  up the way `pff` is.
+
+**Positional tilt cannot diagnose scoring format — don't try.** Using PFF's two boards as a calibrated
+yardstick (same analyst, same projections, only scoring differs), the PPR→half switch moves the
+WR-minus-RB mean rank gap by only ~2.8 positions, while analyst-to-analyst disagreement spans ~10. A
+discriminator built on this misclassifies *known* half-PPR `ds` as PPR. Read the config and the live
+page; treat a WR-heavy-looking board as a prompt to check, never as evidence.
+
 ### Data Source URLs
 
 **Redraft ADP:**
@@ -636,12 +679,13 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
     value in as ADP drives that metric to ~0 by construction and silently destroys the divergence signal.
     Same reasoning killed the old FantasyPros consensus ADP as the source: it is a *consensus of experts*,
     which is not what "average draft position on Sleeper" means.
-- `fetch_fantasypros_rankings(output_dir, year=2025, scoring="ppr", min_players=200)` — parses the
-  **embedded `ecrData` JSON** from the FantasyPros cheatsheet page (works year-round; the
+- `fetch_fantasypros_rankings(output_dir, year=CURRENT_SEASON, scoring=FP_DEFAULT_SCORING, min_players=200)`
+  — parses the **embedded `ecrData` JSON** from the FantasyPros cheatsheet page (works year-round; the
   `/rankings/*-overall.php` table 302-redirects in the offseason) and writes the **8-column
-  `COLUMN_MAPPINGS['fp']` schema** → `FantasyPros_{year}_Draft_ALL_Rankings.csv`. Defaults to PPR;
-  `scoring` ∈ `{ppr, half-ppr, standard}`. CLI: **`ff-rankings fetch-fp [--output DIR] [--year N]
-  [--scoring S] [--min-players N]`**.
+  `COLUMN_MAPPINGS['fp']` schema** → `FantasyPros_{year}_Draft_ALL_Rankings.csv`. Defaults to
+  **`half-ppr`** (`FP_DEFAULT_SCORING` — it used to be `ppr`, see "Every redraft source must be
+  HALF-PPR"); `scoring` ∈ `{ppr, half-ppr, standard}`. CLI: **`ff-rankings fetch-fp [--output DIR]
+  [--year N] [--scoring S] [--min-players N]`**.
 - `fetch_draftsharks(output_dir, min_players=150)` — **saved-session headless-browser** fetcher for
   DraftSharks half-PPR rankings. The page is a JS-rendered SPA (the DOM renders only ~25 players with no
   projections), so it uses **Playwright** to drive the page's own client-side **Export** button
@@ -669,6 +713,12 @@ Separate from the HW scraper, `fetch_rankings.py` provides fetchers for the draf
   9-col layout the pipeline already consumes. CLI: **`ff-rankings fetch-pff [--output DIR] [--year N]
   [--min-players N] [--auto-login]`**. Validates the `Overall Rank` header (the export has a title row above
   it) + coverage floor.
+  - **Sets the scoring format first.** `_select_pff_scoring` picks `PFF_SCORING_LABEL` (`"Half PPR"`) from
+    `PFF_SCORING_DROPDOWN_SELECTOR` and **asserts the dropdown reads it back** before downloading — the page
+    defaults to full PPR and the export follows the dropdown with nothing in the CSV recording which board
+    it is. Option matching is **exact**: `PPR` is a substring of `Half PPR`, `NON-PPR` and `2-QB PPR`, so a
+    `has_text` match selects the wrong board. Don't assume the previous run's setting persisted in the
+    saved session.
   - **Selector**: `PFF_CSV_BUTTON_SELECTOR` = `button[data-testid="csvDownloadButton"]`. Use the
     **`data-testid`** — the accessible name is `"Download CSV"` while the visible text is only `"CSV"`, so
     name/text matching is brittle.
