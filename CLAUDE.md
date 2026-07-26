@@ -12,7 +12,13 @@ This is a Python pipeline for processing fantasy football rankings from multiple
 
 ## Requirements
 
-- **Python**: 3.9 or higher (`requires-python = ">=3.9"` in `pyproject.toml`; current package version is `0.3.0`)
+- **Python**: 3.13 or higher (`requires-python = ">=3.13"` in `pyproject.toml`; current package version is `0.3.0`)
+- **pandas 3.x** is the tested and locked major (3.0.5 / numpy 2.5.1). This repo used to lock
+  pandas 2.3 while *executing* on pandas 3 in every production venv — it is always imported into
+  a sibling's environment (`fantasy-data`, `quant-edge-mcp`), never run from its own — so its CI
+  tested a combination that never ran and never tested the one that did. That gap hid a live
+  defect: see "Positional ranks and the pandas 3 string dtype" below. The floors stay permissive
+  (`pandas>=2.1.4`) because the code is verified against both majors; the **lock** is the pin.
 - **Package Manager**: `uv` (recommended) or `pip`
 - **Key Dependencies**: pandas, requests, beautifulsoup4, openpyxl, lxml, rapidfuzz
 - **Data Directory Structure**: The pipeline expects this directory layout:
@@ -305,6 +311,27 @@ df = add_player_ids(df, player_name_to_key, verbose=True)
 ```
 
 ## Important Implementation Details
+
+### Positional ranks and the pandas 3 string dtype
+
+**Never branch on `dtype == object` to decide whether a column holds text.** pandas 3 changed the
+default inference for text columns from `object` to `str`, so that test flipped from True to False
+without any code changing.
+
+`_melt` (`analysis/historical.py`) reads positional ranks that arrive either as published strings
+(`"RB1"`) or as bare numbers, and picked the branch that way. Under pandas 3 every `"RB1"` took the
+numeric branch instead, where `to_numeric(errors="coerce")` turns it into `NaN`. Nothing raised.
+On a board that also carries overall ranks the rows survive with an empty `pos_rank`; on a
+**positional-only board** (2024 Hayden Winks) both ranks are then null and `_melt` drops the row on
+purpose — so the expert disappears from `expert_rankings_historical` **entirely**.
+
+The test is now `is_numeric_dtype`, which gives the same answer under both majors. Pinned by
+`TestMeltPositionalDtypes`, which asserts against the `object` **and** `str` dtypes directly rather
+than against whichever pandas happens to be installed.
+
+This was caught by the 3.13/pandas-3 pre-flight, not by a failure: the live table was clean (4,587
+rows, zero null `pos_rank`) only because `ff-expert-analysis` had always been run from this repo's
+own pandas-2 venv. It would have corrupted on the next run from any sibling venv.
 
 ### Silent traps in the stats aggregation
 

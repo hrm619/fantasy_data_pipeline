@@ -11,7 +11,7 @@ readme = "README.md"
 authors = [
     {name = "Henry Marsh"},
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
@@ -67,7 +67,7 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py313"
 
 [tool.ruff.lint]
 # Pyflakes (F) plus the pycodestyle subset ruff enables by default.

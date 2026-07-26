@@ -14,6 +14,7 @@ import pytest
 from fantasy_pipeline.analysis.historical import (
     _collapse_duplicate_players,
     _derive_pos_ranks,
+    _melt,
     _parse_positional,
     _value_over_replacement,
 )
@@ -67,6 +68,59 @@ class TestParsePositional:
     @pytest.mark.parametrize("bad", ["#REF!", "#NAME?", "", None, 5, float("nan")])
     def test_rejects_blanks_and_spreadsheet_errors(self, bad):
         assert _parse_positional(bad) is None
+
+
+class TestMeltPositionalDtypes:
+    """`_melt` must read published positional ranks ("RB1") whatever dtype pandas infers.
+
+    The branch used to be `dtype == object`, which is how pandas 2 types a text column but
+    NOT how pandas 3 does — it infers `str`. Under pandas 3 every "RB1" fell through to
+    `to_numeric(errors="coerce")` and became NaN, so `pos_rank` came out empty for every
+    expert publishing that format. Nothing raised; the table just lost a column of meaning.
+    The pipeline already executes inside pandas-3 venvs (fantasy-data's), so this is pinned
+    against the dtypes themselves rather than against whichever major is installed.
+    """
+
+    def _frame(self, pos_rank_series):
+        return pd.DataFrame(
+            {
+                "PLAYER ID": ["P0", "P1"],
+                "PLAYER NAME": ["Player 0", "Player 1"],
+                "_pos": ["RB", "WR"],
+                "POS RANK": pos_rank_series,
+            }
+        )
+
+    def _melted(self, df):
+        return _melt(df, 2025, "2025-08-01", "src.csv", {}, {"POS RANK": "jj"})
+
+    @pytest.mark.parametrize("dtype", ["object", "str"])
+    def test_published_strings_parse_under_either_string_dtype(self, dtype):
+        df = self._frame(pd.Series(["RB1", "WR12"], dtype=dtype))
+        out = self._melted(df)
+        assert list(out["pos_rank"]) == [1, 12]
+
+    def test_bare_numbers_still_take_the_numeric_path(self):
+        df = self._frame(pd.Series([1, 12]))
+        out = self._melted(df)
+        assert list(out["pos_rank"]) == [1, 12]
+
+    def test_spreadsheet_errors_drop_the_row_rather_than_parsing(self):
+        # `#REF!` yields no rank, and on a positional-only board that means no row at all
+        # (see `_melt`: absence is not a rank of NaN). The ranked player is unaffected.
+        df = self._frame(pd.Series(["#REF!", "WR12"], dtype="str"))
+        out = self._melted(df)
+        assert list(out["player_id"]) == ["P1"]
+        assert list(out["pos_rank"]) == [12]
+
+    def test_a_positional_only_board_survives_as_rows(self):
+        # The failure this guards is worse than a null column: with no overall-rank column,
+        # a coerced-to-NaN pos_rank leaves both ranks null and `_melt` drops every row, so
+        # the expert disappears from the table entirely rather than arriving empty.
+        df = self._frame(pd.Series(["RB1", "WR12"], dtype="str"))
+        out = self._melted(df)
+        assert len(out) == 2
+        assert set(out["rank_scope"]) == {"positional"}
 
 
 class TestCollapseDuplicatePlayers:

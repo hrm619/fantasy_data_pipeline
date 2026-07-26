@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 
 from ..config import DEFAULT_PATHS, HISTORICAL_DATA_DIR, project_root
 from ..core.stats_aggregator import _dedupe_season_rows
@@ -282,7 +283,18 @@ def _melt(
             ranks[(expert, "overall_rank")] = _numeric(df[col])
     for col, expert in positional.items():
         if col in df.columns:
-            parsed = df[col].map(_parse_positional) if df[col].dtype == object else _numeric(df[col])
+            # Ask whether the column is NUMERIC, not whether it is `object`. Positional ranks
+            # arrive either as published strings ("RB1") or as bare numbers, and the old test
+            # was `dtype == object` — true for strings under pandas 2, but **false under pandas
+            # 3**, whose default inference gives a text column the `str` dtype instead. Every
+            # "RB1" would then take the numeric branch, and `to_numeric(errors="coerce")` turns
+            # it into NaN: not a crash, just a silently empty `pos_rank` for every expert whose
+            # sheet publishes positional ranks that way. `is_numeric_dtype` is the same answer
+            # under both majors, and non-numeric extension dtypes still reach `_parse_positional`
+            # (which returns None for anything that isn't a str, so a mixed column degrades
+            # exactly as it did before).
+            series = df[col]
+            parsed = _numeric(series) if is_numeric_dtype(series) else series.map(_parse_positional)
             ranks[(expert, "pos_rank")] = pd.Series(parsed, index=df.index)
 
     experts = sorted({e for e, _ in ranks})

@@ -11,7 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        # 3.12 dropped when requires-python moved to >=3.13: the package no longer installs
+        # there, and the siblings it runs inside (fantasy-data, quant-edge-mcp) are all 3.13.
+        python-version: ["3.13"]
 
     steps:
       - uses: actions/checkout@v4
