@@ -1,1 +1,2 @@
-- [DraftSharks Export](draftsharks-export.md) — capture the full ungated rankings board via Playwright; mobile-viewport gate + which export button to click
+- [DraftSharks Export](draftsharks-export.md) — capture the full rankings board via Playwright; now login-gated, and which export button to click
+- [PFF scoring & export](pff-scoring-and-export.md) — the scoring dropdown label lies; wait on the rankings API response, and why `get_by_role("PPR")` is ambiguous
