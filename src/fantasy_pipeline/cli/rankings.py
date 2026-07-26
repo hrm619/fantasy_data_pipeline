@@ -497,7 +497,7 @@ def _login_command(argv) -> int:
     parser.add_argument(
         "source",
         choices=sorted(SOURCE_LOGIN_URLS),
-        help="Account-gated source to log in to (fp is a free account; ds/pff/fpts/jj are subscriptions)",
+        help="Account-gated source to log in to (fp is a free account; ds/pff/fpts/jj/rp are subscriptions)",
     )
     parser.add_argument(
         "--timeout-minutes", type=int, default=10, help="How long the login window stays open (default: 10)"

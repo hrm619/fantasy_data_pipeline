@@ -1,4 +1,4 @@
-"""Saved-session auth for the account-gated ranking sources (fp, fpts, pff, jj).
+"""Saved-session auth for the account-gated sources (fp, ds, fpts, pff, jj, rp).
 
 Strategy: the user logs in **once** per source in a real (headed) browser via
 `ff-rankings login <source>`; we persist that browser context's cookies/localStorage
@@ -24,12 +24,18 @@ from pathlib import Path
 # 'ds' (DraftSharks) used to need no account: the export was reachable on the mobile viewport
 # via an ungated `a.mobile-export-button`. DraftSharks removed that button, leaving only the
 # gated `a.export-button` -> /login, so the export now requires a session like the others.
+#
+# 'rp' (Reception Perception) is the one entry here that is NOT a rankings source — its
+# consumer lives in the sibling `fantasy-data` repo, which imports this module rather than
+# standing up a second session store. This dict is a registry of logins, not of rankings
+# fetchers, so it is the right home; nothing in the pipeline's own fetchers reads 'rp'.
 SOURCE_LOGIN_URLS = {
     "fp": "https://secure.fantasypros.com/accounts/login/",
     "ds": "https://www.draftsharks.com/login",
     "pff": "https://www.pff.com/login",
     "fpts": "https://www.fantasypoints.com/login",
     "jj": "https://www.patreon.com/login",
+    "rp": "https://receptionperception.com/login/",
 }
 
 # Where persisted sessions live — deliberately outside the repo working tree.

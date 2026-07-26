@@ -319,7 +319,12 @@ def _require_playwright():
         from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
-            "DraftSharks fetch needs Playwright (optional 'headless' extra). Install it with:\n"
+            # Source-neutral on purpose: this helper backs every browser path (ds/pff/fpts/jj
+            # exports, and `ff-rankings login <source>` for all of them incl. 'rp'), so naming
+            # one source here sends the reader to the wrong repo. Note the venv matters — the
+            # 'headless' extra is the PIPELINE's, so run browser paths from this repo.
+            "This fetch needs Playwright (the pipeline's optional 'headless' extra). Install it with:\n"
+            "  cd fantasy_data_pipeline\n"
             '  uv pip install -e ".[headless]"\n'
             "  playwright install chromium"
         ) from exc
